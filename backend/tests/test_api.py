@@ -47,7 +47,7 @@ def test_fetch_game_with_no_reviews_returns_404(client, fake_steam):
     fake_steam.responses = [steam_page([])]
     response = client.post("/games/999999999/fetch")
     assert response.status_code == 404
-    assert "no English reviews" in response.json()["detail"]
+    assert "may not exist, or it has no reviews yet" in response.json()["detail"]
 
 
 def test_fetch_when_steam_fails_returns_502(client, fake_steam):

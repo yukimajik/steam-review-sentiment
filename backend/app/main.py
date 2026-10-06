@@ -88,8 +88,10 @@ def fetch_game(
         raise HTTPException(502, f"Steam API error: {error}") from error
 
     if fetched == 0:
-        # Steam answers success=1 with no reviews even for app IDs that don't exist
-        raise HTTPException(404, f"Steam has no English reviews for app {app_id}. Double-check the app ID.")
+        # Steam answers the same way (success=1, no reviews) for app IDs that don't exist
+        # and for real apps with no reviews, so we can't tell which one this is.
+        raise HTTPException(404, f"Steam returned no English reviews for app {app_id}. "
+                                 "The app may not exist, or it has no reviews yet.")
 
     scored = db.score_reviews(conn, app_id=app_id)
     return FetchResult(app_id=app_id, fetched=fetched, new=new, scored=scored)

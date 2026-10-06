@@ -40,8 +40,9 @@ def main() -> None:
             raise SystemExit(f"Stopped: {error}. The {total_new} new reviews fetched before this are saved.")
 
     if total_fetched == 0:
-        # Steam answers success=1 with no reviews even for app IDs that don't exist
-        print(f"No English reviews found for app {args.app_id}. Double-check the app ID.")
+        # Steam answers the same way for app IDs that don't exist and for apps with no reviews
+        print(f"Steam returned no English reviews for app {args.app_id}. "
+              "The app may not exist, or it has no reviews yet.")
     else:
         print(f"Done. Saved {total_new} new reviews for app {args.app_id}.")
 

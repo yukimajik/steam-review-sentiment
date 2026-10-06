@@ -49,7 +49,7 @@ A learning guide to this project: what each piece does, how data moves through i
 4. **Save.** `steam.to_row` picks out the fields we store, and `db.save_reviews` inserts them with `ON CONFLICT DO NOTHING`, so reviews we already have are skipped. Each page is committed immediately.
 5. **Next pages.** Steam's response includes a cursor pointing at the next page. We wait 1 second (to be polite) and ask again, until we hit `max_reviews`, get an empty page, or Steam repeats the cursor.
 6. **If Steam fails.** Network errors, rate limits (`429`) and server errors (`5xx`) are retried up to 3 times. Anything else (like `404`) fails at once. If it still fails, the reviews already saved get scored and the API returns `502`.
-7. **Nothing found.** If Steam had zero reviews (it answers "success" even for app IDs that don't exist), the API returns `404`.
+7. **Nothing found.** If Steam had zero reviews, the API returns `404` saying the app may not exist or has no reviews yet. Steam gives the identical answer ("success", zero reviews) for an app ID that doesn't exist and for a real app with no reviews, such as a game demo, so the API can't tell which it is.
 8. **Scoring.** `db.score_reviews` reads this game's unscored reviews 1,000 at a time, and `sentiment.score` cleans each text and runs VADER. Scores and labels are written back, committing each batch.
 9. **Response.** `{"fetched": 2000, "new": 2000, "scored": 2000}`. In real runs this took 26.4 and 27.7 seconds, almost all of it waiting on Steam. Scoring 4,000 reviews takes under a second.
 
