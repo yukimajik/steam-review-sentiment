@@ -13,3 +13,10 @@ CREATE TABLE IF NOT EXISTS reviews (
 
 -- The dashboard will almost always filter by game, so index that column.
 CREATE INDEX IF NOT EXISTS idx_reviews_app_id ON reviews (app_id);
+
+-- Sentiment, filled in by backend/scripts/score_sentiment.py (NULL until a review is scored).
+-- Added with ALTER TABLE ... IF NOT EXISTS so this file can be re-run on an existing
+-- database to pick up new columns without deleting any data.
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS sentiment_compound REAL;  -- VADER score, -1 (most negative) to +1 (most positive)
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS sentiment_label TEXT
+    CHECK (sentiment_label IN ('positive', 'neutral', 'negative'));
