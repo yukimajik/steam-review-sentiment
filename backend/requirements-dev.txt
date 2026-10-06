@@ -1,0 +1,4 @@
+# Extra packages for running the tests (not needed in the Docker image)
+-r requirements.txt
+pytest==9.1.1
+httpx2==2.13.1
