@@ -2,7 +2,11 @@
 
 A learning guide to this project: what each piece does, how data moves through it, why it was built this way, and how to talk about it in an interview. Every number here comes from a real run on this project's data (2,000 reviews each of Portal 2 and Cities: Skylines II, fetched October 2026).
 
-**Built so far:** Phase 1 (fetch reviews into PostgreSQL), Phase 2 (VADER sentiment and measuring its accuracy), Phase 3 (FastAPI backend in Docker, with tests). The React frontend comes later.
+**Built so far:**
+- Phase 1: fetch reviews into PostgreSQL.
+- Phase 2: VADER sentiment, and measuring its accuracy.
+- Phase 3: FastAPI backend in Docker, with tests.
+- Phase 4: React dashboard.
 
 ---
 
@@ -24,6 +28,12 @@ A learning guide to this project: what each piece does, how data moves through i
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
+| `frontend/src/App.tsx` | The dashboard page: search, loading the game's data, the fetch button, and which state to show (loading, not stored, error, ready). |
+| `frontend/src/api.ts` | Calls the API, mirrors its response shapes as TypeScript types, and turns failures into messages a person can act on. |
+| `frontend/src/format.ts` | Number, date and score formatting, sentiment colors and labels, and stripping Steam's formatting tags for display. |
+| `frontend/src/components/` | `SearchForm`, `SummaryCards`, `SentimentPie`, `TrendChart`, `ReviewList`: one file per part of the page. |
+| `frontend/src/index.css` | All styling: color tokens, layout, and the phone/tablet/desktop breakpoints. |
+| `frontend/package.json` | Frontend dependencies (React, Recharts, Vite, TypeScript, Oxlint) and scripts (`dev`, `build`, `lint`). |
 
 ### The `reviews` table
 
@@ -63,6 +73,15 @@ A learning guide to this project: what each piece does, how data moves through i
 ### The command-line scripts
 
 They call the same `app` functions as the API, so there's one copy of the logic. `fetch_reviews.py` + `score_sentiment.py` together do what the fetch endpoint does.
+
+### In the browser
+
+1. You type an app ID. `SearchForm` checks it's a whole number in the database's range **before** calling the API, so a typo gets an instant message.
+2. `App` calls `/summary` and `/trend` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
+3. **404** means the game isn't stored. The page offers "Fetch reviews from Steam", which calls `POST /fetch?max_reviews=1000`. In a real run that took 12.8 seconds, then the dashboard loaded.
+4. **Any other error** shows a message saying what to do (start the API, start the database, try again later) with a "Try again" button.
+5. **Success** draws the summary cards, the pie, and the line chart. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment.
+6. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
 
 ### Docker
 
@@ -120,6 +139,23 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Shared `app` package for API and scripts** | One copy of the fetch and scoring logic | Duplicate code in scripts and API |
 | **Separate dev requirements** | The Docker image doesn't carry test tools | One requirements file |
 
+### Frontend
+
+| Choice | Why | Alternatives |
+|---|---|---|
+| **Vite + React + TypeScript** | Vite starts instantly and reloads on save; TypeScript catches mistakes like a misspelled API field at build time | Create React App (no longer maintained); Next.js (server rendering we don't need); plain JavaScript |
+| **Recharts** | Declarative React components for charts, with tooltips and responsive sizing built in | Chart.js (not React-native); D3 (full control, much more code) |
+| **Blue / gray / red for positive / neutral / negative** | Sentiment is an *ordered* scale, so it gets a diverging palette: opposite poles plus a neutral midpoint. Checked with a script, not by eye: worst colorblind separation ΔE 8.7 (target ≥ 8), every color ≥ 3:1 contrast | Green/red (the classic pair red-green colorblind readers can't separate); three unrelated hues (hides the order) |
+| **Legend with values next to the pie, data table under the line chart** | Every number is readable without hovering, and identity never relies on color alone | Tooltips only (hidden on touch screens and to screen readers) |
+| **Line chart's y-axis fixed at −1 to +1, with a line at 0** | Shows where sentiment really sits on VADER's scale. A zoomed-in axis would make a 0.35 → 0.38 wobble look dramatic | Auto-scaled axis |
+| **Plain CSS with variables, no UI library** | Small, readable, nothing to learn beyond CSS; colors defined once | Tailwind; a component library like MUI |
+| **Results tagged with the request they answer** | "Loading" is derived (latest result isn't for the current request), and a slow old response can never overwrite a newer one | Setting a `loading` flag inside the effect (an extra render, and the linter warns about it) |
+| **`AbortController` on every request** | Searching again cancels the old request instead of racing it | Ignoring stale responses after they arrive |
+| **Search disabled during a fetch** | The fetch result can't land on a different game than the one shown | Allowing it and tracking which game each fetch belongs to |
+| **Steam's formatting tags stripped for display** | `[spoiler]...[/spoiler]` showed up on the first page of Portal 2 reviews; same tag list the scorer uses | Show raw text; render the formatting (more code, and spoilers would need a reveal button) |
+| **Frontend runs with `npm run dev`, not in Docker yet** | Instant reloads while building; it can join Compose later | An nginx container serving the built files |
+| **One 611 kB bundle (181 kB gzipped), mostly Recharts** | Fine for a local dashboard | Load the charts separately with `import()` to make first paint faster |
+
 ---
 
 ## 4. Key concepts, simply
@@ -171,6 +207,16 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 **Mutation check.** Break the code on purpose and confirm a test fails. If none does, the tests aren't checking that code. This found a real gap: the summary test never exercised half of the agreement formula until its data was fixed.
 
 ---
+
+**Single-page app (SPA).** One HTML page; JavaScript fetches data from the API and redraws parts of the page, instead of the server sending a new page for every click.
+
+**React state and effects.** State is data that, when it changes, makes React redraw. An effect runs after a redraw. Here, effects load data whenever the app ID, filter or page changes.
+
+**Race conditions.** If you search 620 and then quickly 949230, the 620 answer might arrive last. The page cancels old requests (`AbortController`) and tags results with the request they answer, so the old answer is never shown.
+
+**Responsive design.** One layout that adapts. Below 640px everything is one column, at 640px the cards go side by side, at 900px the two charts sit side by side. Checked at 375px (phone), 768px (tablet) and 1280px (desktop) with no sideways scrolling.
+
+**Skeletons vs. fading.** Gray placeholder shapes on the first load tell you what's coming. On later loads (new page, new filter), the old content stays and fades, because swapping it for placeholders would make the page jump.
 
 ## 5. Results so far
 
@@ -248,6 +294,24 @@ Compose puts both containers on a private network where each service's name is i
 
 **Why does the trend only cover a few months?**
 Each fetch starts from the newest review, and 2,000 reviews only reach back 3–4 months for these games. A longer trend needs a bigger fetch. Even better would be remembering the cursor where the last fetch stopped, so each fetch continues further back.
+
+**How does the frontend handle errors?**
+Every failure becomes a message that says what to do. The API client (`api.ts`) maps each case to plain language:
+- Can't connect: "is the API running? Start it with `docker compose up -d`".
+- `404`: the game isn't stored, so the page offers to fetch it.
+- `502`: Steam is down, try again later.
+- `503`: the database is down.
+
+Each message has a "Try again" button. Bad input is caught before any request. I tested each case against the real stack by stopping the API container and the database container while the page was open.
+
+**How did you make sure it works on phones?**
+The CSS is mobile-first: one column by default, with wider layouts added at 640px and 900px. Charts use Recharts' `ResponsiveContainer` to fill whatever width they get. I checked it in a browser at 375px, 768px and 1280px, including a script confirming the page is never wider than the screen. That check caught the sentiment filter chips running off a phone screen; they now wrap.
+
+**Why a pie chart if they're often criticized?**
+The requirement was a pie, and with only three slices showing part of a whole it reads fine. To make it accessible:
+- The colors follow the scale's order (blue = positive, gray = neutral, red = negative) and were validated for colorblind separation.
+- 2px gaps separate the slices.
+- A legend with exact percentages sits right next to it, so nobody has to judge angles.
 
 **How do you keep secrets out of the code?**
 Credentials live in `.env`, which is git-ignored, with `.env.example` as a template. Docker Compose reads the same file. All SQL uses parameterized queries, so user input is never pasted into SQL.

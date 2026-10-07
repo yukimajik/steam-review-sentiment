@@ -2,7 +2,7 @@
 
 A data pipeline and dashboard for analyzing player sentiment in Steam game reviews.
 
-**Tech:** Python · FastAPI · PostgreSQL · VADER · Docker Compose · pytest · React (in development)
+**Tech:** Python · FastAPI · PostgreSQL · VADER · Docker Compose · pytest · React · TypeScript · Vite · Recharts
 
 ## Features
 
@@ -13,6 +13,7 @@ A data pipeline and dashboard for analyzing player sentiment in Steam game revie
 - Measures how often the sentiment label agrees with the reviewer's own Recommended / Not recommended vote, compared against a majority-class baseline
 - REST API with endpoints for fetching, a summary, a monthly trend, and filtered, paginated reviews; CORS enabled for a local React frontend
 - pytest suite that runs against a separate test database, with Steam faked so tests never touch the network
+- React dashboard: search by app ID, summary cards, sentiment pie chart, monthly trend line, and a filterable, paginated review list, with loading and error states and a layout that works on phones
 
 ## Project structure
 
@@ -25,6 +26,11 @@ steam-review-sentiment/
 │   └── init.sql                   # Creates the reviews table (safe to re-run)
 ├── docs/
 │   └── HOW_IT_WORKS.md            # How everything works and why (learning doc)
+├── frontend/                      # React dashboard (Vite + TypeScript)
+│   ├── src/App.tsx                # The page: search, states, layout
+│   ├── src/api.ts                 # API client and response types
+│   ├── src/components/            # Search, summary cards, charts, review list
+│   └── src/index.css              # Styles and responsive layout
 └── backend/
     ├── Dockerfile                 # Builds the API image
     ├── requirements.txt           # Python dependencies
@@ -64,6 +70,22 @@ steam-review-sentiment/
    ```bash
    curl http://localhost:8000/games/620/summary
    ```
+
+## Dashboard
+
+Needs Node.js 20.19+ or 22.12+ and the API running (step 2 above).
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:5173 and search for an app ID. If the game isn't stored yet, the page offers to fetch its 1,000 newest reviews from Steam (about 10–15 seconds).
+
+The dashboard calls the API at `http://localhost:8000` by default. To use another address, copy `frontend/.env.example` to `frontend/.env` and change `VITE_API_URL`. If the dashboard runs on an address other than `http://localhost:5173`, add it to `CORS_ORIGINS` in the main `.env`.
+
+Other commands, run inside `frontend/`: `npm run build` type-checks and builds for production, and `npm run lint` checks the code.
 
 ## API
 
