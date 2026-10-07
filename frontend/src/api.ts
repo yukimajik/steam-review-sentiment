@@ -44,6 +44,18 @@ export interface ReviewPage {
   items: Review[]
 }
 
+export interface SearchResult {
+  app_id: number
+  name: string
+  image_url: string | null // small cover image on Steam's servers
+}
+
+export interface SearchResponse {
+  query: string // what was searched for, cleaned up
+  matched_query: string // what produced the results; shorter than `query` when a typo was trimmed
+  results: SearchResult[]
+}
+
 export interface FetchResult {
   app_id: number
   fetched: number
@@ -66,7 +78,7 @@ function messageFor(status: number, detail: unknown): string {
     case 404:
       return typeof detail === 'string' ? detail : 'Not found.'
     case 422:
-      return "That isn't a valid request. Check the app ID."
+      return typeof detail === 'string' ? detail : "That isn't a valid request."
     case 502:
       return "Steam isn't responding right now. Try again in a minute."
     case 503:
@@ -89,6 +101,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(response.status, messageFor(response.status, body?.detail))
   }
   return response.json() as Promise<T>
+}
+
+export function searchGames(query: string, signal?: AbortSignal) {
+  return request<SearchResponse>(`/search?${new URLSearchParams({ q: query })}`, { signal })
 }
 
 export function getSummary(appId: number, signal?: AbortSignal) {

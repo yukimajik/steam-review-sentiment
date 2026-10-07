@@ -1,4 +1,4 @@
-"""Fetch English reviews for one game from Steam's public reviews API."""
+"""Talks to Steam: fetches a game's English reviews, and searches the store by name."""
 
 import logging
 import time
@@ -7,10 +7,14 @@ from datetime import datetime, timezone
 import requests
 
 STEAM_REVIEWS_URL = "https://store.steampowered.com/appreviews/{app_id}"
+STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"  # undocumented, used by the store's own search box
 PAGE_SIZE = 100            # Steam's maximum reviews per request
 DELAY_BETWEEN_PAGES = 1.0  # seconds; be polite to Steam's servers
 MAX_RETRIES = 3
 MAX_RETRY_WAIT = 60        # seconds; cap on how long a Retry-After header can make us wait
+# Search runs while someone types, so it gives up sooner than fetching does (worst case ~12s, not ~96s)
+SEARCH_TIMEOUT = 5         # seconds per attempt
+SEARCH_RETRIES = 2
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +37,37 @@ def retry_wait(attempt: int, retry_after: str | None) -> float:
     return 2 ** attempt
 
 
+def get_json(url: str, params: dict, what: str, timeout: float = 30, max_retries: int = MAX_RETRIES) -> dict:
+    """
+    GET a Steam URL and return its JSON, retrying on network errors, rate limits and
+    server errors. `what` names the request in error messages, e.g. "app 620".
+    """
+    for attempt in range(1, max_retries + 1):
+        retry_after = None
+        try:
+            response = requests.get(url, params=params, timeout=timeout)
+        except (requests.ConnectionError, requests.Timeout) as error:
+            problem = f"network error: {error}"
+        else:
+            if response.status_code == 200:
+                try:
+                    return response.json()
+                except ValueError as error:  # e.g. an HTML error page instead of JSON
+                    raise SteamError(f"Steam sent a response that isn't JSON for {what}") from error
+            if not is_retryable(response.status_code):
+                raise SteamError(f"Steam returned HTTP {response.status_code} for {what}")
+            problem = f"HTTP {response.status_code}"
+            retry_after = response.headers.get("Retry-After")
+
+        if attempt == max_retries:
+            raise SteamError(f"Steam request for {what} failed {max_retries} times ({problem})")
+        wait = retry_wait(attempt, retry_after)
+        logger.warning("Steam request failed (%s), retrying in %ss...", problem, wait)
+        time.sleep(wait)
+
+
 def fetch_page(app_id: int, cursor: str) -> dict:
-    """Request one page of reviews, retrying on network errors, rate limits and server errors."""
+    """Request one page of reviews."""
     params = {
         "json": 1,
         "language": "english",
@@ -44,38 +77,25 @@ def fetch_page(app_id: int, cursor: str) -> dict:
         "num_per_page": PAGE_SIZE,
         "cursor": cursor,         # requests URL-encodes this (cursors contain + / =)
     }
-    url = STEAM_REVIEWS_URL.format(app_id=app_id)
-
-    for attempt in range(1, MAX_RETRIES + 1):
-        retry_after = None
-        try:
-            response = requests.get(url, params=params, timeout=30)
-        except (requests.ConnectionError, requests.Timeout) as error:
-            problem = f"network error: {error}"
-        else:
-            if response.status_code == 200:
-                return parse_page(response, app_id)
-            if not is_retryable(response.status_code):
-                raise SteamError(f"Steam returned HTTP {response.status_code} for app {app_id}")
-            problem = f"HTTP {response.status_code}"
-            retry_after = response.headers.get("Retry-After")
-
-        if attempt == MAX_RETRIES:
-            raise SteamError(f"Steam request for app {app_id} failed {MAX_RETRIES} times ({problem})")
-        wait = retry_wait(attempt, retry_after)
-        logger.warning("Steam request failed (%s), retrying in %ss...", problem, wait)
-        time.sleep(wait)
-
-
-def parse_page(response: requests.Response, app_id: int) -> dict:
-    """Read Steam's JSON, checking it's a successful answer."""
-    try:
-        data = response.json()
-    except ValueError as error:  # e.g. an HTML error page instead of JSON
-        raise SteamError(f"Steam sent a response that isn't JSON for app {app_id}") from error
+    data = get_json(STEAM_REVIEWS_URL.format(app_id=app_id), params, f"app {app_id}")
     if data.get("success") != 1:
         raise SteamError(f"Steam returned success={data.get('success')} for app {app_id}")
     return data
+
+
+def search_store(term: str) -> list[dict]:
+    """
+    Search the Steam store by name: at most 10 results, most relevant first.
+    Includes DLC, demos and soundtracks (Steam labels them all "app"); packages
+    and bundles are dropped because their IDs aren't app IDs.
+    """
+    params = {"term": term, "l": "english", "cc": "US"}
+    data = get_json(STORE_SEARCH_URL, params, f'search "{term}"', timeout=SEARCH_TIMEOUT, max_retries=SEARCH_RETRIES)
+    return [
+        {"app_id": item["id"], "name": item["name"], "image_url": item.get("tiny_image")}
+        for item in data.get("items", [])
+        if item.get("type") == "app"
+    ]
 
 
 def fetch_reviews(app_id: int, max_reviews: int):

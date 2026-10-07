@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { ApiError, fetchFromSteam, getSummary, getTrend, isAbort, type Summary, type Trend } from './api'
+import { ApiError, fetchFromSteam, getSummary, getTrend, isAbort, type SearchResult, type Summary, type Trend } from './api'
 import { ReviewList } from './components/ReviewList'
-import { SearchForm } from './components/SearchForm'
+import { GameSearch } from './components/GameSearch'
 import { SentimentPie } from './components/SentimentPie'
 import { SummaryCards, SummaryCardsSkeleton } from './components/SummaryCards'
 import { ChartSkeleton, TrendChart } from './components/TrendChart'
@@ -19,7 +19,8 @@ type Loaded = { key: string } & (
 )
 
 export default function App() {
-  const [appId, setAppId] = useState<number | null>(null)
+  const [game, setGame] = useState<SearchResult | null>(null) // picked from the search box
+  const appId = game?.app_id ?? null
   const [reloadKey, setReloadKey] = useState(0) // bump to load the dashboard again
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [fetching, setFetching] = useState(false)
@@ -56,10 +57,10 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [appId, dashboard, requestKey])
 
-  function search(id: number) {
-    setAppId(id)
+  function pickGame(picked: SearchResult) {
+    setGame(picked)
     setFetchError(null)
-    setReloadKey((key) => key + 1) // searching the same game again refreshes it
+    setReloadKey((key) => key + 1) // picking the same game again refreshes it
   }
 
   async function fetchReviews(id: number) {
@@ -83,15 +84,21 @@ export default function App() {
       </header>
 
       {/* Disabled while fetching, so the result can't land on a different game */}
-      <SearchForm onSearch={search} disabled={fetching} />
+      <GameSearch onSelect={pickGame} disabled={fetching} />
 
       <main>
-        {appId === null ? (
+        {game === null || appId === null ? (
           <p className="intro">Search for a game to see its sentiment breakdown, how it changed over time, and the reviews behind it.</p>
         ) : (
           <>
             <div className="dashboard-header">
-              <h2>App {appId}</h2>
+              <div className="game-title">
+                {game.image_url && <img src={game.image_url} alt="" width={116} height={44} />}
+                <div>
+                  <h2>{game.name}</h2>
+                  <p className="game-id">App {appId}</p>
+                </div>
+              </div>
               <a href={`https://store.steampowered.com/app/${appId}`} target="_blank" rel="noreferrer">
                 View on Steam ↗
               </a>
