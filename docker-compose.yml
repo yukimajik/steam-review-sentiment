@@ -21,5 +21,19 @@ services:
       timeout: 5s
       retries: 5
 
+  api:
+    build: ./backend
+    container_name: steam_reviews_api
+    restart: unless-stopped
+    environment:
+      # Inside Docker the database's address is the service name "db", not localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy   # wait until Postgres accepts connections
+
 volumes:
   pgdata:
