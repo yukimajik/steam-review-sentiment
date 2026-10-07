@@ -13,7 +13,8 @@ A data pipeline and dashboard for analyzing player sentiment in Steam game revie
 - Measures how often the sentiment label agrees with the reviewer's own Recommended / Not recommended vote, compared against a majority-class baseline
 - REST API with endpoints for fetching, a summary, a monthly trend, and filtered, paginated reviews; CORS enabled for a local React frontend
 - pytest suite that runs against a separate test database, with Steam faked so tests never touch the network
-- React dashboard: search by app ID, summary cards, sentiment pie chart, monthly trend line, and a filterable, paginated review list, with loading and error states and a layout that works on phones
+- Search by game name: a dropdown of matching games with cover images as you type, using Steam's store search through the backend (debounced, cached for an hour, forgiving of typos)
+- React dashboard: summary cards, sentiment pie chart, monthly trend line, and a filterable, paginated review list, with loading and error states and a layout that works on phones
 
 ## Project structure
 
@@ -29,7 +30,7 @@ steam-review-sentiment/
 ├── frontend/                      # React dashboard (Vite + TypeScript)
 │   ├── src/App.tsx                # The page: search, states, layout
 │   ├── src/api.ts                 # API client and response types
-│   ├── src/components/            # Search, summary cards, charts, review list
+│   ├── src/components/            # Game search, summary cards, charts, review list
 │   └── src/index.css              # Styles and responsive layout
 └── backend/
     ├── Dockerfile                 # Builds the API image
@@ -37,7 +38,8 @@ steam-review-sentiment/
     ├── requirements-dev.txt       # + test dependencies
     ├── app/
     │   ├── main.py                # FastAPI app: endpoints, CORS, error handling
-    │   ├── steam.py               # Steam API client (pagination, retries)
+    │   ├── steam.py               # Steam API client: reviews and store search (retries)
+    │   ├── search.py              # Game search: cache and typo fallback
     │   ├── sentiment.py           # VADER scoring and labels
     │   └── db.py                  # Saving and scoring reviews in PostgreSQL
     ├── scripts/
@@ -81,7 +83,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 and search for an app ID. If the game isn't stored yet, the page offers to fetch its 1,000 newest reviews from Steam (about 10–15 seconds).
+Open http://localhost:5173 and start typing a game's name, then pick it from the dropdown. If the game isn't stored yet, the page offers to fetch its 1,000 newest reviews from Steam (about 10–15 seconds).
 
 The dashboard calls the API at `http://localhost:8000` by default. To use another address, copy `frontend/.env.example` to `frontend/.env` and change `VITE_API_URL`. If the dashboard runs on an address other than `http://localhost:5173`, add it to `CORS_ORIGINS` in the main `.env`.
 
@@ -94,6 +96,7 @@ Other commands, run inside `frontend/`: `npm run build` type-checks and builds f
 | `POST /games/{app_id}/fetch?max_reviews=1000` | Fetches the newest English reviews (1–5,000), saves new ones, scores them. Returns `fetched`, `new`, `scored`. |
 | `GET /games/{app_id}/summary` | Total reviews, % positive / neutral / negative, `agreement_pct` (VADER label matches the player's vote; neutral counts as a miss), and `baseline_pct` (what always guessing the more common vote would score). |
 | `GET /games/{app_id}/trend` | Average VADER score and review count per month (UTC), by the date reviews were posted. |
+| `GET /search?q=hollow kni` | Up to 10 games matching a name (app ID, name, cover image URL), most relevant first. Results are cached for an hour. If nothing matches, the last letter is dropped and the search retried (up to 3 times); `matched_query` says which search produced the results. |
 | `GET /games/{app_id}/reviews?sentiment=negative&page=1&page_size=20` | Reviews newest first, optionally one sentiment. `page_size` up to 100; `total` is the count across all pages. |
 
 Errors: `404` when a game has no stored reviews (fetch it first) or Steam has none, `422` for invalid input, `502` when Steam fails after retries, `503` when the database is unreachable.

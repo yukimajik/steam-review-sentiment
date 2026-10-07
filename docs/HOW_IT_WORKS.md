@@ -7,6 +7,7 @@ A learning guide to this project: what each piece does, how data moves through i
 - Phase 2: VADER sentiment, and measuring its accuracy.
 - Phase 3: FastAPI backend in Docker, with tests.
 - Phase 4: React dashboard.
+- Then: search by game name instead of app ID.
 
 ---
 
@@ -18,7 +19,8 @@ A learning guide to this project: what each piece does, how data moves through i
 | `.env.example` | Template for `.env`, which holds the database password and settings. `.env` is git-ignored so secrets never get committed. |
 | `db/init.sql` | Creates the `reviews` table and adds the sentiment columns. Runs automatically on a brand-new database and is safe to re-run on an existing one. |
 | `backend/app/main.py` | The API: four endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
-| `backend/app/steam.py` | Talks to Steam's reviews API: follows page cursors, retries failures, respects rate limits. |
+| `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors) and searches the store by name. Both share one retry function that respects rate limits. |
+| `backend/app/search.py` | Game search on top of Steam's store search: a one-hour cache and the typo fallback. |
 | `backend/app/sentiment.py` | Cleans review text and scores it with VADER, then turns the score into positive / neutral / negative. |
 | `backend/app/db.py` | Saves reviews (skipping duplicates) and scores unscored reviews in batches. Shared by the API and the scripts. |
 | `backend/scripts/fetch_reviews.py` | Command-line version of fetching (without scoring). |
@@ -28,10 +30,10 @@ A learning guide to this project: what each piece does, how data moves through i
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
-| `frontend/src/App.tsx` | The dashboard page: search, loading the game's data, the fetch button, and which state to show (loading, not stored, error, ready). |
+| `frontend/src/App.tsx` | The dashboard page: the picked game (name, cover, app ID), loading its data, the fetch button, and which state to show (loading, not stored, error, ready). |
 | `frontend/src/api.ts` | Calls the API, mirrors its response shapes as TypeScript types, and turns failures into messages a person can act on. |
 | `frontend/src/format.ts` | Number, date and score formatting, sentiment colors and labels, and stripping Steam's formatting tags for display. |
-| `frontend/src/components/` | `SearchForm`, `SummaryCards`, `SentimentPie`, `TrendChart`, `ReviewList`: one file per part of the page. |
+| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `SummaryCards`, `SentimentPie`, `TrendChart`, `ReviewList`: one file per part of the page. |
 | `frontend/src/index.css` | All styling: color tokens, layout, and the phone/tablet/desktop breakpoints. |
 | `frontend/package.json` | Frontend dependencies (React, Recharts, Vite, TypeScript, Oxlint) and scripts (`dev`, `build`, `lint`). |
 
@@ -76,12 +78,22 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 
 ### In the browser
 
-1. You type an app ID. `SearchForm` checks it's a whole number in the database's range **before** calling the API, so a typo gets an instant message.
+1. You type part of a game's name. `GameSearch` waits until you pause typing (300 ms) and calls `/search` (described in the next section). It shows up to 10 matches with covers. Picking one hands its app ID, name and cover to `App`.
 2. `App` calls `/summary` and `/trend` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
 3. **404** means the game isn't stored. The page offers "Fetch reviews from Steam", which calls `POST /fetch?max_reviews=1000`. In a real run that took 12.8 seconds, then the dashboard loaded.
 4. **Any other error** shows a message saying what to do (start the API, start the database, try again later) with a "Try again" button.
 5. **Success** draws the summary cards, the pie, and the line chart. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment.
 6. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
+
+### Searching for a game: `GET /search?q=cyberpnk`
+
+1. **Validation.** The query is lowercased and spaces are collapsed. Fewer than 2 or more than 100 characters returns `422`, without asking Steam.
+2. **Cache.** If the same search was answered within the last hour, the answer comes from memory. In a real run, "Portal" took 0.29 s from Steam, and the repeat search "portal" took 0.006 s from the cache.
+3. **Steam.** Otherwise the backend calls Steam's store search (`store.steampowered.com/api/storesearch`). It keeps only `app` results, because packages and bundles have IDs that aren't app IDs.
+4. **Typo fallback.** If nothing matches, it drops the last letter and asks again, up to 3 times and never below 3 letters.
+   - In real runs, "cyberpnk" became "cyberp", which found Cyberpunk 2077.
+   - The response's `matched_query` says which search produced the results, so the dropdown can show "No exact match for 'cyberpnk'. Showing results for 'cyberp'".
+5. **Failures.** Search waits at most 5 s per try and tries twice, giving up much sooner than fetching does. If Steam still fails, the API returns `502`.
 
 ### Docker
 
@@ -153,6 +165,13 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Results tagged with the request they answer** | "Loading" is derived (latest result isn't for the current request), and a slow old response can never overwrite a newer one | Setting a `loading` flag inside the effect (an extra render, and the linter warns about it) |
 | **`AbortController` on every request** | Searching again cancels the old request instead of racing it | Ignoring stale responses after they arrive |
 | **"Server is waking up" note after 5 s of loading** | On Render's free plan the API sleeps without visitors and takes about a minute to wake; without the note, visitors would stare at placeholders and assume it's broken | A fixed loading spinner with no explanation; paying for an always-on server |
+| **Search by name using Steam's store search** | Checked with real calls. The full app list (`ISteamApps/GetAppList`) now returns 404 "Method not found". Its replacement (`IStoreService/GetAppList`) needs a Steam Web API key, a new table and a refresh job, and has no covers for newer games. The store search needs none of that, ranks popular games first, and includes cover URLs | The full app list in our database: offline, fuzzy search under our control, but a secret key and much more machinery |
+| **Search goes through our backend** | Steam's store search sends no CORS header, so a browser couldn't read its answers directly anyway. The backend also caches, retries, and hides an undocumented endpoint's format from the frontend | Calling Steam from the browser (blocked by CORS) |
+| **Debounce of 300 ms, at least 2 characters** | Typing "hollow knight" sent 1 request, not 13 | Searching on every keystroke; a search button |
+| **One-hour in-memory cache, at most 1,000 searches** | Repeated searches are instant and don't touch Steam; the cap keeps memory bounded | No cache; Redis (shared across servers, but another service to run) |
+| **Typo fallback: drop the last letter, up to 3 times** | Steam matches word beginnings but not typos inside words. Fixed `cyberpnk`, `hollow knigt` and `stardw` in real tests | Plain "no results" message; fuzzy matching (needs the full list) |
+| **DLC, demos and soundtracks shown** | Steam labels them like games; hiding them means guessing from names, or 10 extra calls per search | Filtering by words like "Soundtrack" |
+| **Accessible combobox** | Keyboard (↑/↓/Enter/Esc), screen readers hear "10 games found", 48 px tall options for touch | A plain list of links |
 | **Search disabled during a fetch** | The fetch result can't land on a different game than the one shown | Allowing it and tracking which game each fetch belongs to |
 | **Steam's formatting tags stripped for display** | `[spoiler]...[/spoiler]` showed up on the first page of Portal 2 reviews; same tag list the scorer uses | Show raw text; render the formatting (more code, and spoilers would need a reveal button) |
 | **Frontend runs with `npm run dev`, not in Docker yet** | Instant reloads while building; it can join Compose later | An nginx container serving the built files |
@@ -217,6 +236,12 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 **Race conditions.** If you search 620 and then quickly 949230, the 620 answer might arrive last. The page cancels old requests (`AbortController`) and tags results with the request they answer, so the old answer is never shown.
 
 **Responsive design.** One layout that adapts. Below 640px everything is one column, at 640px the cards go side by side, at 900px the two charts sit side by side. Checked at 375px (phone), 768px (tablet) and 1280px (desktop) with no sideways scrolling.
+
+**Debouncing.** Waiting until the user pauses typing before doing the work. Each keystroke restarts a short timer, and only when it runs out does the search happen.
+
+**Caching with expiry.** Remembering answers so repeat questions are instant. Each entry expires after an hour, so results can't get too old, and the oldest entries are dropped once there are 1,000, so memory can't grow forever.
+
+**CORS, from the other side.** Our API sends CORS headers so our page can read it. Steam's store search doesn't, so no other website's page can read it. A server isn't a browser, so our backend can call Steam freely.
 
 **Skeletons vs. fading.** Gray placeholder shapes on the first load tell you what's coming. On later loads (new page, new filter), the old content stays and fades, because swapping it for placeholders would make the page jump.
 
@@ -296,6 +321,28 @@ Compose puts both containers on a private network where each service's name is i
 
 **Why does the trend only cover a few months?**
 Each fetch starts from the newest review, and 2,000 reviews only reach back 3–4 months for these games. A longer trend needs a bigger fetch. Even better would be remembering the cursor where the last fetch stopped, so each fetch continues further back.
+
+**Why didn't you download Steam's full list of games?**
+I tested both options with real calls before choosing.
+- **The classic full-list endpoint no longer exists.** It returns 404 "Method not found".
+- **Its replacement needs a Steam Web API key** (a secret to manage), a table, and a job to keep it current.
+- **It doesn't give cover images,** and the old image URL pattern 404s for newer games.
+
+The store search needed none of that and ranks popular games first. Its weaknesses, typos and the risk of rate limits, I handled with a typo fallback, a cache and debouncing.
+
+**How does the search box avoid hammering Steam?**
+Three layers:
+1. **Debouncing.** The browser waits for a 300 ms pause in typing, so typing "hollow knight" sent one request instead of 13.
+2. **Cancelling.** Typing again cancels a search that's already running.
+3. **Caching.** The backend remembers answers for an hour, so a repeat search took 0.006 s instead of 0.29 s and never reached Steam.
+
+On top of that, search retries less and gives up sooner than fetching does, and it respects `Retry-After` when Steam rate limits.
+
+**Why route search through your backend instead of calling Steam from the browser?**
+Steam's store search sends no CORS header, so the browser couldn't read its responses anyway. Beyond that, the backend is the one place to:
+- cache and retry
+- handle rate limits
+- adapt if Steam changes its undocumented format, without the frontend noticing
 
 **How does the frontend handle errors?**
 Every failure becomes a message that says what to do. The API client (`api.ts`) maps each case to plain language:

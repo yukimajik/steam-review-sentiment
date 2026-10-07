@@ -35,3 +35,12 @@ def steam_review(review_id, text="Great game", voted_up=True, timestamp=17540000
 
 def steam_page(reviews, cursor="next"):
     return FakeResponse(payload={"success": 1, "reviews": reviews, "cursor": cursor})
+
+
+def store_item(app_id, name, item_type="app"):
+    """One result in the shape of Steam's store search JSON."""
+    return {"type": item_type, "id": app_id, "name": name, "tiny_image": f"https://img.example.test/{app_id}.jpg"}
+
+
+def store_search_page(items):
+    return FakeResponse(payload={"total": len(items), "items": items})

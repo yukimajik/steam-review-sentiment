@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
-from app import db
+from app import db, search
 from app.steam import SteamError, fetch_reviews, to_row
 
 MAX_FETCH = 5000  # the fetch request waits until done, so cap how long that can take
@@ -58,6 +58,34 @@ def no_reviews(app_id: int) -> HTTPException:
 
 def pct(part: int, whole: int) -> float:
     return round(100 * part / whole, 1)
+
+
+# ---------- GET /search ----------
+
+class SearchResult(BaseModel):
+    app_id: int
+    name: str
+    image_url: str | None  # small cover image on Steam's servers
+
+
+class SearchResponse(BaseModel):
+    query: str          # what was searched for, cleaned up (lowercase, single spaces)
+    matched_query: str  # what produced the results; shorter than `query` when a typo was trimmed
+    results: list[SearchResult]
+
+
+@app.get("/search", response_model=SearchResponse)
+def search_games(q: Annotated[str, Query(max_length=100, description="Part of a game's name, e.g. hollow kni")]):
+    """Find games by name, most relevant first (at most 10). Asks Steam's store search
+    through our backend, with a 1-hour cache and a fallback for typos."""
+    query = search.normalize(q)
+    if len(query) < 2:
+        raise HTTPException(422, "Type at least 2 characters to search.")
+    try:
+        matched_query, results = search.search_games(query)
+    except SteamError as error:
+        raise HTTPException(502, f"Steam search error: {error}") from error
+    return SearchResponse(query=query, matched_query=matched_query, results=results)
 
 
 # ---------- POST /games/{app_id}/fetch ----------
