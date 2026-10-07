@@ -11,4 +11,6 @@ COPY app/ app/
 COPY scripts/ scripts/
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Hosts like Render say which port to listen on in $PORT (Render uses 10000); locally it's 8000.
+# "exec" makes uvicorn the main process, so it receives the shutdown signal directly.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

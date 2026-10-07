@@ -8,6 +8,7 @@ import { ChartSkeleton, TrendChart } from './components/TrendChart'
 import { formatCount } from './format'
 
 const FETCH_COUNT = 1000 // reviews to fetch when a game isn't stored yet
+const SLOW_LOAD_MS = 5000 // after this long, explain that the server may be waking up
 
 // The outcome of loading one game. `key` says which request it answers, so a result
 // for an older request is never shown as the current one.
@@ -23,6 +24,7 @@ export default function App() {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [fetching, setFetching] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  const [slowKey, setSlowKey] = useState<string | null>(null) // the request that's taking a while
 
   const requestKey = `${appId}-${reloadKey}`
   const dashboard = loaded?.key === requestKey ? loaded : null // null while the current request is loading
@@ -44,6 +46,15 @@ export default function App() {
       })
     return () => controller.abort()
   }, [appId, reloadKey])
+
+  // The free hosting plan puts the API to sleep when nobody uses it; the first request
+  // then waits for it to wake. Explain the wait instead of showing placeholders silently.
+  const isSlow = dashboard === null && slowKey === requestKey
+  useEffect(() => {
+    if (appId === null || dashboard !== null) return
+    const timer = setTimeout(() => setSlowKey(requestKey), SLOW_LOAD_MS)
+    return () => clearTimeout(timer)
+  }, [appId, dashboard, requestKey])
 
   function search(id: number) {
     setAppId(id)
@@ -89,6 +100,12 @@ export default function App() {
             {dashboard === null && (
               <div className="dashboard" aria-busy="true">
                 <p className="sr-only" role="status">Loading…</p>
+                {isSlow && (
+                  <p className="loading-note" role="status">
+                    <span className="spinner" aria-hidden="true" /> Still loading. The server sleeps after a while
+                    without visitors and can take up to a minute to wake up.
+                  </p>
+                )}
                 <SummaryCardsSkeleton />
                 <div className="charts">
                   <ChartSkeleton title="Sentiment breakdown" />

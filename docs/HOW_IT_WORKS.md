@@ -138,6 +138,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Steam faked in tests** | Fast, repeatable, works offline, and can simulate failures like 429s on demand | Call real Steam (slow, flaky, can't force errors) |
 | **Shared `app` package for API and scripts** | One copy of the fetch and scoring logic | Duplicate code in scripts and API |
 | **Separate dev requirements** | The Docker image doesn't carry test tools | One requirements file |
+| **The image listens on `$PORT`, defaulting to 8000** | Hosts like Render choose the port (Render uses 10000) and pass it in `PORT`; locally nothing changes. Started with `exec` so uvicorn receives the shutdown signal directly | Hard-coding 8000 and configuring the host to match |
 
 ### Frontend
 
@@ -151,6 +152,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Plain CSS with variables, no UI library** | Small, readable, nothing to learn beyond CSS; colors defined once | Tailwind; a component library like MUI |
 | **Results tagged with the request they answer** | "Loading" is derived (latest result isn't for the current request), and a slow old response can never overwrite a newer one | Setting a `loading` flag inside the effect (an extra render, and the linter warns about it) |
 | **`AbortController` on every request** | Searching again cancels the old request instead of racing it | Ignoring stale responses after they arrive |
+| **"Server is waking up" note after 5 s of loading** | On Render's free plan the API sleeps without visitors and takes about a minute to wake; without the note, visitors would stare at placeholders and assume it's broken | A fixed loading spinner with no explanation; paying for an always-on server |
 | **Search disabled during a fetch** | The fetch result can't land on a different game than the one shown | Allowing it and tracking which game each fetch belongs to |
 | **Steam's formatting tags stripped for display** | `[spoiler]...[/spoiler]` showed up on the first page of Portal 2 reviews; same tag list the scorer uses | Show raw text; render the formatting (more code, and spoilers would need a reveal button) |
 | **Frontend runs with `npm run dev`, not in Docker yet** | Instant reloads while building; it can join Compose later | An nginx container serving the built files |
