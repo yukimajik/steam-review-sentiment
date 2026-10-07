@@ -164,8 +164,9 @@ export default function App() {
       </main>
 
       <footer className="page-footer">
-        Sentiment is scored by VADER, a word-based model. “Model agreement” is how often its label matches the player’s own
-        thumbs up or down; neutral labels count as misses.
+        Sentiment labels come from a classifier (TF-IDF + logistic regression) trained on Steam reviews to predict whether
+        the player recommends the game; “neutral” means it isn’t confident either way. “Model agreement” is how often its
+        label matches the player’s own thumbs up or down, with neutral counting as a miss.
       </footer>
     </div>
   )

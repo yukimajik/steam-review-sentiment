@@ -1,9 +1,9 @@
 """
-Score each review's text with VADER and save the result to PostgreSQL.
+Score each review's text with the sentiment classifier and save the result to PostgreSQL.
 
 Only reviews without a score are processed, so run this again after fetching more
-reviews. Use --rescore to recompute every review (e.g. after changing the thresholds
-in backend/app/sentiment.py).
+reviews. Use --rescore to recompute every review (e.g. after retraining the model with
+backend/scripts/train_model.py).
 
 Usage (from the project root, with the database running):
     python backend/scripts/score_sentiment.py
@@ -21,7 +21,7 @@ from app import db  # noqa: E402
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Score Steam reviews with VADER sentiment.")
+    parser = argparse.ArgumentParser(description="Score Steam reviews with the sentiment classifier.")
     parser.add_argument("--rescore", action="store_true",
                         help="also recompute reviews that already have a score")
     args = parser.parse_args()

@@ -2,14 +2,14 @@
 
 A data pipeline and dashboard for analyzing player sentiment in Steam game reviews.
 
-**Tech:** Python · FastAPI · PostgreSQL · VADER · Docker Compose · pytest · React · TypeScript · Vite · Recharts
+**Tech:** Python · FastAPI · PostgreSQL · scikit-learn · Docker Compose · pytest · React · TypeScript · Vite · Recharts
 
 ## Features
 
 - Fetches English reviews for any Steam game from Steam's public reviews API, following cursor-based pagination
 - Stores reviews in PostgreSQL with idempotent inserts, so re-running never creates duplicates
 - Retries network errors, rate limits (honoring `Retry-After`) and Steam server errors with exponential backoff, and commits page by page so progress survives interruptions
-- Scores each review's sentiment with VADER, after removing Steam's BBCode tags and ♥ profanity censoring
+- Labels each review positive / neutral / negative with a TF-IDF + logistic regression classifier trained on Steam reviews. It was chosen over VADER and a transformer by a held-out comparison; see [results](backend/experiments/results.md)
 - Measures how often the sentiment label agrees with the reviewer's own Recommended / Not recommended vote, compared against a majority-class baseline
 - REST API with endpoints for fetching, a summary, a monthly trend, and filtered, paginated reviews; CORS enabled for a local React frontend
 - pytest suite that runs against a separate test database, with Steam faked so tests never touch the network
@@ -40,13 +40,15 @@ steam-review-sentiment/
     │   ├── main.py                # FastAPI app: endpoints, CORS, error handling
     │   ├── steam.py               # Steam API client: reviews and store search (retries)
     │   ├── search.py              # Game search: cache and typo fallback
-    │   ├── sentiment.py           # VADER scoring and labels
+    │   ├── sentiment.py           # Sentiment classifier: scoring and labels
+    │   ├── sentiment_model.pkl    # The trained classifier (built by train_model.py)
     │   └── db.py                  # Saving and scoring reviews in PostgreSQL
     ├── experiments/               # Model comparison: VADER vs transformer vs TF-IDF (results.md)
     ├── scripts/
     │   ├── fetch_reviews.py       # Steam API -> PostgreSQL (command line)
-    │   ├── score_sentiment.py     # VADER score + label for each review
-    │   └── evaluate_sentiment.py  # Agreement between VADER and Steam's voted_up
+    │   ├── train_model.py         # Trains the classifier from the database
+    │   ├── score_sentiment.py     # Score + label for each review
+    │   └── evaluate_sentiment.py  # Agreement between the labels and Steam's voted_up
     └── tests/                     # pytest tests
 ```
 
@@ -95,8 +97,8 @@ Other commands, run inside `frontend/`: `npm run build` type-checks and builds f
 | Endpoint | What it returns |
 |---|---|
 | `POST /games/{app_id}/fetch?max_reviews=1000` | Fetches the newest English reviews (1–5,000), saves new ones, scores them. Returns `fetched`, `new`, `scored`. |
-| `GET /games/{app_id}/summary` | Total reviews, % positive / neutral / negative, `agreement_pct` (VADER label matches the player's vote; neutral counts as a miss), and `baseline_pct` (what always guessing the more common vote would score). |
-| `GET /games/{app_id}/trend` | Average VADER score and review count per month (UTC), by the date reviews were posted. |
+| `GET /games/{app_id}/summary` | Total reviews, % positive / neutral / negative, `agreement_pct` (the label matches the player's vote; neutral counts as a miss), and `baseline_pct` (what always guessing the more common vote would score). |
+| `GET /games/{app_id}/trend` | Average model score (−1 likely Not recommended … +1 likely Recommended) and review count per month (UTC), by the date reviews were posted. |
 | `GET /search?q=hollow kni` | Up to 10 games matching a name (app ID, name, cover image URL), most relevant first. Results are cached for an hour. If nothing matches, the last letter is dropped and the search retried (up to 3 times); `matched_query` says which search produced the results. |
 | `GET /games/{app_id}/reviews?sentiment=negative&page=1&page_size=20` | Reviews newest first, optionally one sentiment. `page_size` up to 100; `total` is the count across all pages. |
 
@@ -130,7 +132,14 @@ These run on your machine, so they need Python 3.10+ (the `python3` built into m
 
 ## Sentiment model comparison
 
-`backend/experiments/compare_models.py` compares the app's VADER scoring with a pretrained transformer (`cardiffnlp/twitter-roberta-base-sentiment-latest`) and a TF-IDF + logistic regression classifier trained on our reviews. The answer key is each player's own thumbs up/down. The test set is whole games the classifier never trained on. The latest results are in [`backend/experiments/results.md`](backend/experiments/results.md).
+`backend/experiments/compare_models.py` compares VADER (the app's original model) with a pretrained transformer (`cardiffnlp/twitter-roberta-base-sentiment-latest`) and a TF-IDF + logistic regression classifier trained on our reviews. The answer key is each player's own thumbs up/down. The test set is whole games the classifier never trained on. The latest results are in [`backend/experiments/results.md`](backend/experiments/results.md). The app now uses the TF-IDF classifier.
+
+To retrain the app's classifier after fetching more games, then re-score the stored reviews with it:
+```bash
+python backend/scripts/train_model.py
+python backend/scripts/score_sentiment.py --rescore
+```
+Rebuild the API image afterwards (`docker compose up -d --build`) so it picks up the new `sentiment_model.pkl`.
 
 To re-run it (it downloads the 501 MB transformer the first time, and takes a few minutes on a laptop CPU):
 ```bash

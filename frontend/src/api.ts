@@ -10,7 +10,7 @@ export interface Summary {
   positive_pct: number
   neutral_pct: number
   negative_pct: number
-  agreement_pct: number // VADER's label matches the player's vote; neutral counts as a miss
+  agreement_pct: number // the model's label matches the player's vote; neutral counts as a miss
   baseline_pct: number // what always guessing the more common vote would score
 }
 

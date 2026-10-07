@@ -5,7 +5,7 @@ import os
 import psycopg
 from dotenv import load_dotenv
 
-from app.sentiment import score
+from app.sentiment import score_many
 
 SCORE_BATCH_SIZE = 1000
 
@@ -57,7 +57,7 @@ def save_reviews(conn: psycopg.Connection, rows: list[tuple]) -> int:
 
 def score_reviews(conn: psycopg.Connection, app_id: int | None = None, rescore: bool = False) -> int:
     """
-    Give every unscored review (for one game, or all games) a VADER score and label.
+    Give every unscored review (for one game, or all games) a sentiment score and label.
     With rescore=True, recompute reviews that already have one. Returns how many were scored.
     """
     last_id = 0
@@ -70,7 +70,8 @@ def score_reviews(conn: psycopg.Connection, app_id: int | None = None, rescore: 
             batch = cur.fetchall()
             if not batch:
                 return total
-            cur.executemany(UPDATE_SQL, [(*score(text), review_id) for review_id, text in batch])
+            scored = score_many([text for _, text in batch])  # one batch call is much faster than one per review
+            cur.executemany(UPDATE_SQL, [(s, label, review_id) for (s, label), (review_id, _) in zip(scored, batch)])
         conn.commit()  # commit each batch so progress is kept if scoring stops midway
         last_id = batch[-1][0]
         total += len(batch)

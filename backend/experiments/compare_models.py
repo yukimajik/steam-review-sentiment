@@ -2,7 +2,7 @@
 Compare three ways to label review sentiment, using Steam's voted_up (the player's own
 Recommended / Not recommended) as the answer key:
 
-  1. VADER, what the app uses now
+  1. VADER, what the app used until this comparison
   2. cardiffnlp/twitter-roberta-base-sentiment-latest, a pretrained transformer for informal text
   3. TF-IDF + logistic regression, trained on our own Steam reviews to predict voted_up
 
@@ -32,7 +32,7 @@ import psycopg
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # lets this script import the app package
-from app.sentiment import BBCODE_TAG, CENSORED_WORD  # noqa: E402
+from app.sentiment import clean  # noqa: E402  (the same cleanup the app does before scoring)
 
 TRANSFORMER = "cardiffnlp/twitter-roberta-base-sentiment-latest"
 TEST_GAMES = {  # held out from training; together ~24% of reviews, 19% Not recommended
@@ -52,11 +52,6 @@ SEED = 42
 RESULTS_FILE = Path(__file__).with_name("results.md")
 
 
-def clean(text: str) -> str:
-    """The same cleanup the app does before scoring: drop Steam's BBCode tags and ♥ censoring."""
-    return CENSORED_WORD.sub(" ", BBCODE_TAG.sub(" ", text))
-
-
 def peak_memory_mb() -> float:
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return peak / 1e6 if sys.platform == "darwin" else peak / 1e3  # bytes on macOS, KB on Linux
@@ -67,11 +62,14 @@ def peak_memory_mb() -> float:
 # "neutral" / "negative" and score is the model's confidence that the review is positive.
 
 def run_vader(texts: list[str]) -> dict:
-    from app.sentiment import score
+    """VADER exactly as the app used it: same cleanup, ±0.05 thresholds on the compound score."""
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+    analyzer = SentimentIntensityAnalyzer()
     start = time.perf_counter()
-    preds = [score(t) for t in texts]  # (compound, label); score() does the cleanup itself
+    compounds = [analyzer.polarity_scores(clean(t))["compound"] for t in texts]
     seconds = time.perf_counter() - start
-    return {"preds": [(label, compound) for compound, label in preds], "seconds": seconds, "peak_mb": peak_memory_mb()}
+    labels = ["positive" if c >= 0.05 else "negative" if c <= -0.05 else "neutral" for c in compounds]
+    return {"preds": list(zip(labels, compounds)), "seconds": seconds, "peak_mb": peak_memory_mb()}
 
 
 def run_transformer(texts: list[str]) -> dict:
@@ -194,7 +192,7 @@ def main() -> None:
     print(f"  done in {training['seconds']:.1f}s, best C={training['best_c']}\n", flush=True)
 
     results = {}
-    for name, func, extra in [("VADER (current)", run_vader, ()),
+    for name, func, extra in [("VADER (previous)", run_vader, ()),
                               ("Transformer (twitter-roberta)", run_transformer, ()),
                               ("TF-IDF + logistic regression", run_tfidf, (model_path,))]:
         print(f"Running {name} on {len(test_texts)} test reviews...", flush=True)
@@ -206,7 +204,7 @@ def main() -> None:
         print(f"  accuracy {m['accuracy']:.1f}%, Not recommended caught {m['notrec_caught']:.1f}%, "
               f"{results[name]['per_second']:.0f} reviews/s, peak memory {out['peak_mb']:.0f} MB\n", flush=True)
 
-    sizes = {"VADER (current)": "0.6 MB (word lists)", "Transformer (twitter-roberta)": "501 MB (weights)",
+    sizes = {"VADER (previous)": "0.6 MB (word lists)", "Transformer (twitter-roberta)": "501 MB (weights)",
              "TF-IDF + logistic regression": f"{training['size_mb']:.1f} MB (trained model)"}
     report = [
         f"# Sentiment model comparison ({date.today().isoformat()})",

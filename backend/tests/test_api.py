@@ -19,7 +19,7 @@ def test_fetch_saves_and_scores_reviews(client, conn, fake_steam):
     fake_steam.responses = [
         steam_page([steam_review(1, "I love this game, amazing"),
                     steam_review(2, "Terrible. Broken and boring.", voted_up=False)], cursor="A"),
-        steam_page([steam_review(3, "city")], cursor="B"),
+        steam_page([steam_review(3, "👍👍👍")], cursor="B"),  # no words the model knows
         steam_page([], cursor="C"),
     ]
     response = client.post("/games/620/fetch")
