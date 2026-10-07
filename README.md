@@ -42,6 +42,7 @@ steam-review-sentiment/
     │   ├── search.py              # Game search: cache and typo fallback
     │   ├── sentiment.py           # VADER scoring and labels
     │   └── db.py                  # Saving and scoring reviews in PostgreSQL
+    ├── experiments/               # Model comparison: VADER vs transformer vs TF-IDF (results.md)
     ├── scripts/
     │   ├── fetch_reviews.py       # Steam API -> PostgreSQL (command line)
     │   ├── score_sentiment.py     # VADER score + label for each review
@@ -126,6 +127,16 @@ These run on your machine, so they need Python 3.10+ (the `python3` built into m
    python backend/scripts/evaluate_sentiment.py 620                 # detailed agreement table
    ```
    They also work inside the API container, e.g. `docker compose exec api python scripts/evaluate_sentiment.py 620`.
+
+## Sentiment model comparison
+
+`backend/experiments/compare_models.py` compares the app's VADER scoring with a pretrained transformer (`cardiffnlp/twitter-roberta-base-sentiment-latest`) and a TF-IDF + logistic regression classifier trained on our reviews. The answer key is each player's own thumbs up/down. The test set is whole games the classifier never trained on. The latest results are in [`backend/experiments/results.md`](backend/experiments/results.md).
+
+To re-run it (it downloads the 501 MB transformer the first time, and takes a few minutes on a laptop CPU):
+```bash
+pip install -r backend/experiments/requirements.txt
+python backend/experiments/compare_models.py
+```
 
 ## Running without Docker
 

@@ -8,6 +8,7 @@ A learning guide to this project: what each piece does, how data moves through i
 - Phase 3: FastAPI backend in Docker, with tests.
 - Phase 4: React dashboard.
 - Then: search by game name instead of app ID.
+- Then: an experiment comparing VADER with a transformer and a trained classifier. The app still uses VADER until we decide.
 
 ---
 
@@ -26,6 +27,9 @@ A learning guide to this project: what each piece does, how data moves through i
 | `backend/scripts/fetch_reviews.py` | Command-line version of fetching (without scoring). |
 | `backend/scripts/score_sentiment.py` | Command-line scoring of unscored reviews; `--rescore` redoes all. |
 | `backend/scripts/evaluate_sentiment.py` | Prints a detailed table of how VADER's labels compare to players' votes. |
+| `backend/experiments/compare_models.py` | The model comparison experiment: VADER vs. a pretrained transformer vs. TF-IDF + logistic regression, on games held out from training. Writes `results.md`. |
+| `backend/experiments/requirements.txt` | The experiment's extra packages (PyTorch, transformers, scikit-learn). The app and its Docker image don't use them. |
+| `backend/experiments/results.md` | The latest comparison report, written by the script. |
 | `backend/tests/` | 44 pytest tests: `test_api.py` (endpoints), `test_steam.py` (retries and errors), `test_sentiment.py` (scoring), plus shared setup in `conftest.py` and `helpers.py`. |
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
@@ -140,6 +144,17 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **`404` for a game with no reviews, empty list for a filter with no matches** | "This game isn't loaded" is an error; "no negative reviews" is a valid answer | Empty responses everywhere (the frontend couldn't tell the two apart) |
 | **CORS for named origins from `.env`** | Only your frontend's address can call the API from a browser | `*` (any website could call it) |
 
+### Choosing a sentiment model (experiment)
+
+| Choice | Why | Alternatives |
+|---|---|---|
+| **Steam's `voted_up` as the answer key** | Free, and labeled by the reviewer themselves. It's a recommendation, not a tone rating, so no model can reach 100% | Labeling reviews by hand (slow, and it's our judgement, not the player's) |
+| **Test set = whole games the classifier never trained on** | A trained model can learn game-specific words ("Todd", "Starfield"). Testing on unseen games measures what the app does: score games it has never seen | A random split of all reviews (would flatter the trained model) |
+| **Fetched 10 more games, 6 of them "Mixed"** | Before, only 681 of 6,500 reviews were Not recommended, 499 of them from one game. After: 3,250 of 16,500, from 15 games | Testing on what we had (too few complaints to measure) |
+| **Accuracy reported with baseline, balanced accuracy and per-class recall** | 81.0% of test reviews are Recommended, so accuracy alone barely separates the models; how many complaints each catches does | Accuracy only |
+| **Each model in its own fresh process** | Peak memory is measured per model, not mixed together | Measuring everything in one process |
+| **TF-IDF classifier weighted toward the rarer class, settings chosen by cross-validation grouped by game** | Without weighting it would lean toward always saying Recommended; grouping by game keeps the tuning honest too | Default settings; tuning on the test set (cheating) |
+
 ### Infrastructure and tests
 
 | Choice | Why | Alternatives |
@@ -237,6 +252,17 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 
 **Responsive design.** One layout that adapts. Below 640px everything is one column, at 640px the cards go side by side, at 900px the two charts sit side by side. Checked at 375px (phone), 768px (tablet) and 1280px (desktop) with no sideways scrolling.
 
+**Held-out test set and data leakage.** You test a model on examples it never trained on. Otherwise you're grading it on answers it has memorized. Here the held-out examples are whole games, so game-specific words can't leak from training into the test.
+
+**Recall and balanced accuracy.** *Recall* for a class is the share of that class the model catches. "Not recommended caught: 50.5%" means VADER finds half the complaints. *Balanced accuracy* averages the two recalls, so a model can't score well just by always picking the common answer.
+
+**TF-IDF + logistic regression.**
+- TF-IDF turns each review into numbers: how often each word or word pair appears, weighted down when it's common across all reviews.
+- Logistic regression learns a weight per word. "refund" pushes toward Not recommended, "masterpiece" toward Recommended.
+- It's simple, fast and small, but it only knows words it saw in training.
+
+**Transformer.** A neural network (here RoBERTa, trained on tweets) that reads words in context. It can tell that "insane boss fights" is praise. The cost is 501 MB of weights and slow processing without a GPU.
+
 **Debouncing.** Waiting until the user pauses typing before doing the work. Each keystroke restarts a short timer, and only when it runs out does the search happen.
 
 **Caching with expiry.** Remembering answers so repeat questions are instant. Each entry expires after an hour, so results can't get too old, and the oldest entries are dropped once there are 1,000, so memory can't grow forever.
@@ -268,6 +294,24 @@ Baseline:                     75.0%  (always guessing "Recommended")
 - **Coverage:** the newest 2,000 reviews only span 3 months (Portal 2) and 4 months (Cities: Skylines II), so the trend is short until more is fetched.
 
 ---
+
+### Sentiment model comparison
+
+All numbers below are from `backend/experiments/results.md`.
+- **Test set:** 4,000 reviews of 4 games the classifier never saw (Starfield, Rust, Black Myth: Wukong, Stardew Valley).
+- **Answer key:** each player's own `voted_up`.
+- **Baseline:** always guessing Recommended scores 81.0%.
+
+| | Accuracy | Not recommended caught | Speed (this Mac) | Peak memory |
+|---|---|---|---|---|
+| VADER (current) | 83.3% | 50.5% | 2,840 reviews/s | 51 MB |
+| Transformer (twitter-roberta) | 83.8% | **84.6%** | 42 reviews/s | **2,499 MB** (1,982 MB in an earlier identical run) |
+| TF-IDF + logistic regression | **85.7%** | 77.5% | 25,233 reviews/s | 156 MB |
+
+- **The bug check found no bug.** All 6,500 stored labels matched their scores, and re-scoring reproduced every stored value. The mislabels come from VADER's general-purpose word list: "insane", "fights" and "combat" count as negative, and "sick" too.
+- **VADER catches only half the complaints.**
+- **The transformer understands context best.** It scored "Zero regrets… insane boss fights" at +0.98. But it misreads gamer sarcasm ("10/10 would get scammed again" came out negative). It also peaked at 2.0–2.5 GB over two runs, 4–5× Render's free plan (512 MB).
+- **The trained classifier is the most accurate, small and fast.** It learned gaming slang ("this game is sick" came out positive). But it predicts the *vote*, not the text's tone: "great game, too bad the servers never work" came out negative.
 
 ## 6. Interview questions
 
@@ -361,6 +405,23 @@ The requirement was a pie, and with only three slices showing part of a whole it
 - The colors follow the scale's order (blue = positive, gray = neutral, red = negative) and were validated for colorblind separation.
 - 2px gaps separate the slices.
 - A legend with exact percentages sits right next to it, so nobody has to judge angles.
+
+**How did you decide which sentiment model to use?**
+I measured instead of guessing.
+1. **I ruled out a bug.** All 6,500 labels matched their scores, and re-scoring reproduced them.
+2. **I compared three approaches** on 4,000 reviews from four games the trained model never saw, using each player's thumbs up/down as the answer key.
+3. **The headline accuracy barely separated them** (83.3%, 83.8%, 85.7% against an 81.0% baseline), because most reviews are positive.
+4. **What separated them was how many complaints each caught:** VADER 50.5%, the transformer 84.6%, TF-IDF 77.5%.
+5. **Then I weighed fit:** the transformer peaked at 2.0–2.5 GB against a 512 MB free tier, while TF-IDF peaked at 156 MB and ran about 600× faster than the transformer.
+
+**Why test on whole games instead of a random split?**
+A classifier trained on our reviews can memorize game-specific words: character names, "Todd", a game's title. A random split would put the same games in training and test and flatter it. Holding out whole games measures what the app actually does, which is score reviews for games it has never seen.
+
+**Why not just use the transformer, since it understands context best?**
+- It needed **2.0–2.5 GB** at peak on my Mac over two runs, 4–5× the free tier's 512 MB, before counting the rest of the API.
+- It scored **38–42 reviews/s** using my Mac's whole CPU. The free tier has 0.1 CPU.
+- To use it, I'd score reviews outside the API, use a compressed version (and re-test it), or pay for a bigger server.
+- It also misreads gamer sarcasm like "10/10 would get scammed again". "Most accurate in general" isn't automatically "best for this data".
 
 **How do you keep secrets out of the code?**
 Credentials live in `.env`, which is git-ignored, with `.env.example` as a template. Docker Compose reads the same file. All SQL uses parameterized queries, so user input is never pasted into SQL.
