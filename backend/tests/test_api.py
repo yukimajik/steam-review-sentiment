@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 import psycopg
 import pytest
 
+from app import db
 from app.main import app, get_conn
-from tests.helpers import FakeResponse, add_review, steam_page, steam_review
+from tests.helpers import FakeResponse, add_review, add_topic, steam_page, steam_review
 
 
 def day(month, d=15):
@@ -28,6 +29,21 @@ def test_fetch_saves_and_scores_reviews(client, conn, fake_steam):
     assert response.json() == {"app_id": 620, "fetched": 3, "new": 3, "scored": 3}
     labels = conn.execute("SELECT recommendation_id, sentiment_label FROM reviews ORDER BY 1").fetchall()
     assert labels == [(1, "positive"), (2, "negative"), (3, "neutral")]
+
+
+def test_fetch_tags_topics_with_their_own_sentiment(client, conn, fake_steam):
+    fake_steam.responses = [steam_page([steam_review(1, "Great story, but the servers are awful")]), steam_page([])]
+    client.post("/games/620/fetch")
+    rows = conn.execute("SELECT topic, excerpt, sentiment_label FROM review_topics ORDER BY topic").fetchall()
+    assert rows == [("multiplayer", "the servers are awful", "negative"), ("story", "Great story,", "positive")]
+
+
+def test_rescoring_replaces_old_topic_tags(conn):
+    add_review(conn, 1, label=None, compound=None, text="The story is great")
+    db.score_reviews(conn)
+    conn.execute("UPDATE reviews SET review_text = 'Laggy mess' WHERE recommendation_id = 1")
+    db.score_reviews(conn, rescore=True)
+    assert conn.execute("SELECT topic FROM review_topics").fetchall() == [("performance",)]
 
 
 def test_fetching_again_skips_saved_reviews(client, fake_steam):
@@ -125,6 +141,52 @@ def test_trend_averages_by_month(client, conn):
 
 def test_trend_unknown_game_returns_404(client):
     assert client.get("/games/620/trend").status_code == 404
+
+
+# ---------- GET /games/{app_id}/topics ----------
+
+def test_topics_counts_and_examples(client, conn):
+    for review_id in range(1, 7):
+        add_review(conn, review_id, helpful_votes=10 if review_id == 1 else 0)
+    # Four performance complaints: the examples are the most helpful one, then the most confident
+    add_topic(conn, 1, "performance", "negative", -0.4, "runs badly")
+    add_topic(conn, 2, "performance", "negative", -0.9)
+    add_topic(conn, 3, "performance", "negative", -0.5)  # 4th of 4: not shown
+    add_topic(conn, 4, "performance", "negative", -0.6)
+    add_topic(conn, 5, "performance", "neutral", 0.0)    # neutral: counted, never an example
+    add_topic(conn, 5, "story", "positive", 0.7)
+    # Review 6 mentions no topic; review 100 is another game
+    add_review(conn, 100, app_id=730)
+    add_topic(conn, 100, "performance", "positive")
+
+    body = client.get("/games/620/topics").json()
+
+    assert body["total_reviews"] == 6
+    # Most mentioned first; topics nobody mentions are still listed, in the usual order
+    assert [t["topic"] for t in body["topics"]] == [
+        "performance", "story", "bugs", "price", "gameplay", "graphics", "multiplayer", "content"]
+    performance, story, bugs = body["topics"][:3]
+    assert (performance["mentions"], performance["positive"], performance["neutral"], performance["negative"]) == (5, 0, 1, 4)
+    assert performance["praise"] == []
+    assert [e["recommendation_id"] for e in performance["complaints"]] == [1, 2, 4]
+    assert performance["complaints"][0] == {
+        "recommendation_id": 1, "excerpt": "runs badly", "sentiment_score": pytest.approx(-0.4),
+        "voted_up": True, "helpful_votes": 10,
+    }
+    assert [e["recommendation_id"] for e in story["praise"]] == [5]
+    assert bugs == {"topic": "bugs", "mentions": 0, "positive": 0, "neutral": 0, "negative": 0,
+                    "praise": [], "complaints": []}
+
+
+def test_topics_when_no_review_mentions_any(client, conn):
+    add_review(conn, 1)
+    response = client.get("/games/620/topics")
+    assert response.status_code == 200
+    assert all(t["mentions"] == 0 for t in response.json()["topics"])
+
+
+def test_topics_unknown_game_returns_404(client):
+    assert client.get("/games/620/topics").status_code == 404
 
 
 # ---------- GET /games/{app_id}/reviews ----------

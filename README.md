@@ -10,11 +10,12 @@ A data pipeline and dashboard for analyzing player sentiment in Steam game revie
 - Stores reviews in PostgreSQL with idempotent inserts, so re-running never creates duplicates
 - Retries network errors, rate limits (honoring `Retry-After`) and Steam server errors with exponential backoff, and commits page by page so progress survives interruptions
 - Labels each review positive / neutral / negative with a TF-IDF + logistic regression classifier trained on Steam reviews. It was chosen over VADER and a transformer by a held-out comparison; see [results](backend/experiments/results.md)
+- Topic breakdown: tags each review with the topics it mentions (performance, bugs, price/value, story, gameplay, graphics, multiplayer/servers, content/length) using keyword lists, and scores only the sentences about each topic, so "great game, but it runs terribly" counts as a performance complaint
 - Measures how often the sentiment label agrees with the reviewer's own Recommended / Not recommended vote, compared against a majority-class baseline
-- REST API with endpoints for fetching, a summary, a monthly trend, and filtered, paginated reviews; CORS enabled for a local React frontend
+- REST API with endpoints for fetching, a summary, a monthly trend, a topic breakdown, and filtered, paginated reviews; CORS enabled for a local React frontend
 - pytest suite that runs against a separate test database, with Steam faked so tests never touch the network
 - Search by game name: a dropdown of matching games with cover images as you type, using Steam's store search through the backend (debounced, cached for an hour, forgiving of typos)
-- React dashboard: summary cards, sentiment pie chart, monthly trend line, and a filterable, paginated review list, with loading and error states and a layout that works on phones
+- React dashboard: summary cards, sentiment pie chart, monthly trend line, a chart of what players praise and complain about by topic (with example excerpts), and a filterable, paginated review list, with loading and error states and a layout that works on phones
 
 ## Project structure
 
@@ -24,13 +25,13 @@ steam-review-sentiment/
 ├── .env.example                   # Template for database credentials and settings
 ├── pytest.ini                     # Test settings
 ├── db/
-│   └── init.sql                   # Creates the reviews table (safe to re-run)
+│   └── init.sql                   # Creates the reviews and review_topics tables (safe to re-run)
 ├── docs/
 │   └── HOW_IT_WORKS.md            # How everything works and why (learning doc)
 ├── frontend/                      # React dashboard (Vite + TypeScript)
 │   ├── src/App.tsx                # The page: search, states, layout
 │   ├── src/api.ts                 # API client and response types
-│   ├── src/components/            # Game search, summary cards, charts, review list
+│   ├── src/components/            # Game search, summary cards, charts, topic breakdown, review list
 │   └── src/index.css              # Styles and responsive layout
 └── backend/
     ├── Dockerfile                 # Builds the API image
@@ -42,12 +43,13 @@ steam-review-sentiment/
     │   ├── search.py              # Game search: cache and typo fallback
     │   ├── sentiment.py           # Sentiment classifier: scoring and labels
     │   ├── sentiment_model.pkl    # The trained classifier (built by train_model.py)
-    │   └── db.py                  # Saving and scoring reviews in PostgreSQL
+    │   ├── topics.py              # Topic keywords and per-topic sentiment
+    │   └── db.py                  # Saving, scoring and topic-tagging reviews in PostgreSQL
     ├── experiments/               # Model comparison: VADER vs transformer vs TF-IDF (results.md)
     ├── scripts/
     │   ├── fetch_reviews.py       # Steam API -> PostgreSQL (command line)
     │   ├── train_model.py         # Trains the classifier from the database
-    │   ├── score_sentiment.py     # Score + label for each review
+    │   ├── score_sentiment.py     # Score, label and topic-tag each review
     │   └── evaluate_sentiment.py  # Agreement between the labels and Steam's voted_up
     └── tests/                     # pytest tests
 ```
@@ -99,6 +101,7 @@ Other commands, run inside `frontend/`: `npm run build` type-checks and builds f
 | `POST /games/{app_id}/fetch?max_reviews=1000` | Fetches the newest English reviews (1–5,000), saves new ones, scores them. Returns `fetched`, `new`, `scored`. |
 | `GET /games/{app_id}/summary` | Total reviews, % positive / neutral / negative, `agreement_pct` (the label matches the player's vote; neutral counts as a miss), and `baseline_pct` (what always guessing the more common vote would score). |
 | `GET /games/{app_id}/trend` | Average model score (−1 likely Not recommended … +1 likely Recommended) and review count per month (UTC), by the date reviews were posted. |
+| `GET /games/{app_id}/topics` | For each of the 8 topics, most mentioned first: how many reviews mention it, how many of those praise it / are neutral / complain, and up to 3 praise and 3 complaint excerpts (most helpful first). `total_reviews` is every scored review, including those that mention no topic. |
 | `GET /search?q=hollow kni` | Up to 10 games matching a name (app ID, name, cover image URL), most relevant first. Results are cached for an hour. If nothing matches, the last letter is dropped and the search retried (up to 3 times); `matched_query` says which search produced the results. |
 | `GET /games/{app_id}/reviews?sentiment=negative&page=1&page_size=20` | Reviews newest first, optionally one sentiment. `page_size` up to 100; `total` is the count across all pages. |
 
@@ -125,7 +128,7 @@ These run on your machine, so they need Python 3.10+ (the `python3` built into m
 3. The scripts do the same jobs as the API, from the command line:
    ```bash
    python backend/scripts/fetch_reviews.py 620 --max-reviews 5000   # fetch only
-   python backend/scripts/score_sentiment.py                        # score unscored reviews (--rescore: all)
+   python backend/scripts/score_sentiment.py                        # score and topic-tag unscored reviews (--rescore: all)
    python backend/scripts/evaluate_sentiment.py 620                 # detailed agreement table
    ```
    They also work inside the API container, e.g. `docker compose exec api python scripts/evaluate_sentiment.py 620`.
@@ -145,6 +148,17 @@ To re-run it (it downloads the 501 MB transformer the first time, and takes a fe
 ```bash
 pip install -r backend/experiments/requirements.txt
 python backend/experiments/compare_models.py
+```
+
+## Topic breakdown
+
+Topics are found with the keyword lists in [`backend/app/topics.py`](backend/app/topics.py), and each topic's sentiment comes from the classifier scoring only the parts of a review that mention it. Keywords are fast and transparent but miss topics described in other words; see [the learning doc](docs/HOW_IT_WORKS.md) for coverage, known mistakes and the smarter alternatives.
+
+After changing the keywords, or on a database created before topics existed, add the new table and re-tag every stored review:
+```bash
+docker compose exec db psql -U steam -d steam_reviews -f /docker-entrypoint-initdb.d/init.sql
+python backend/scripts/score_sentiment.py --rescore
+docker compose up -d --build
 ```
 
 ## Running without Docker
@@ -169,6 +183,6 @@ The code only needs a `DATABASE_URL`, so a PostgreSQL install directly on Window
 
 ## Notes
 
-- `db/init.sql` only runs automatically when the database volume is **empty**. It is safe to re-run, so to add new columns to an existing database without losing data, run it yourself: `docker compose exec db psql -U steam -d steam_reviews -f /docker-entrypoint-initdb.d/init.sql` (without Docker: `psql "$DATABASE_URL" -f db/init.sql`).
+- `db/init.sql` only runs automatically when the database volume is **empty**. It is safe to re-run, so to add new columns or tables to an existing database without losing data, run it yourself: `docker compose exec db psql -U steam -d steam_reviews -f /docker-entrypoint-initdb.d/init.sql` (without Docker: `psql "$DATABASE_URL" -f db/init.sql`).
 - If port 5432 is already in use (for example, by a local PostgreSQL install), change the left side of `"5432:5432"` in `docker-compose.yml` and the port in `DATABASE_URL`.
 - To let a frontend on a different address call the API, set `CORS_ORIGINS` in `.env` (comma-separated) and run `docker compose up -d` again.

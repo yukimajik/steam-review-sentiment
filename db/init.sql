@@ -17,6 +17,18 @@ CREATE INDEX IF NOT EXISTS idx_reviews_app_id ON reviews (app_id);
 -- Sentiment, filled in by backend/scripts/score_sentiment.py (NULL until a review is scored).
 -- Added with ALTER TABLE ... IF NOT EXISTS so this file can be re-run on an existing
 -- database to pick up new columns without deleting any data.
-ALTER TABLE reviews ADD COLUMN IF NOT EXISTS sentiment_compound REAL;  -- VADER score, -1 (most negative) to +1 (most positive)
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS sentiment_compound REAL;  -- model score, -1 (likely Not recommended) to +1 (likely Recommended)
 ALTER TABLE reviews ADD COLUMN IF NOT EXISTS sentiment_label TEXT
     CHECK (sentiment_label IN ('positive', 'neutral', 'negative'));
+
+-- Topics each review mentions (performance, bugs, ...), filled in alongside the sentiment by
+-- backend/app/topics.py. One row per review per topic. The excerpt is the part of the review
+-- that mentions the topic, and its sentiment is the classifier's verdict on that part alone.
+CREATE TABLE IF NOT EXISTS review_topics (
+    recommendation_id BIGINT NOT NULL REFERENCES reviews ON DELETE CASCADE,
+    topic             TEXT NOT NULL,  -- e.g. 'performance'; the list of topics lives in topics.py
+    excerpt           TEXT NOT NULL,
+    sentiment_score   REAL NOT NULL,  -- -1 (likely a complaint) to +1 (likely praise)
+    sentiment_label   TEXT NOT NULL CHECK (sentiment_label IN ('positive', 'neutral', 'negative')),
+    PRIMARY KEY (recommendation_id, topic)
+);

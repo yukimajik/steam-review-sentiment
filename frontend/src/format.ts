@@ -1,4 +1,4 @@
-import type { Sentiment } from './api'
+import type { Sentiment, Topic } from './api'
 
 const integer = new Intl.NumberFormat('en-US')
 
@@ -44,4 +44,15 @@ export const SENTIMENT_COLORS: Record<Sentiment, string> = {
   positive: 'var(--sentiment-positive)',
   neutral: 'var(--sentiment-neutral)',
   negative: 'var(--sentiment-negative)',
+}
+
+export const TOPIC_LABELS: Record<Topic, string> = {
+  performance: 'Performance',
+  bugs: 'Bugs',
+  price: 'Price / value',
+  story: 'Story',
+  gameplay: 'Gameplay',
+  graphics: 'Graphics',
+  multiplayer: 'Multiplayer / servers',
+  content: 'Content / length',
 }

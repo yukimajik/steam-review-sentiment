@@ -66,6 +66,8 @@ def predict(pipeline, texts: list[str]) -> list[float | None]:
 
 def score_many(texts: list[str]) -> list[tuple[float, str]]:
     """(score, label) for each text. The score is 2·P(Recommended) − 1, from −1 to +1."""
+    if not texts:
+        return []  # scikit-learn refuses an empty batch
     results = []
     for p in predict(model()["pipeline"], texts):
         s = 0.0 if p is None else round(2 * p - 1, 4)
