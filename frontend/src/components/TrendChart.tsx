@@ -19,7 +19,7 @@ export function TrendChart({ months }: { months: TrendMonth[] }) {
   return (
     <section className="card chart-card">
       <h3>Average sentiment by month</h3>
-      <p className="chart-note">VADER score from −1 (most negative) to +1 (most positive), by review date</p>
+      <p className="chart-note">Model score from −1 (likely Not recommended) to +1 (likely Recommended), by review date</p>
       <div
         className="trend"
         role="img"

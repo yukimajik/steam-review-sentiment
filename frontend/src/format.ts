@@ -6,7 +6,7 @@ export const formatCount = (n: number) => integer.format(n)
 
 export const formatPct = (pct: number) => `${pct.toFixed(1)}%`
 
-/** VADER scores with an explicit sign, e.g. +0.44 / -0.53 / 0.00 */
+/** Model scores with an explicit sign, e.g. +0.44 / -0.53 / 0.00 */
 export const formatScore = (score: number) => (score > 0 ? '+' : '') + score.toFixed(2)
 
 /** "2026-08" -> "Aug 2026" */

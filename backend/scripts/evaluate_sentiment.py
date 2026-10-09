@@ -1,5 +1,5 @@
 """
-Measure how often VADER's sentiment label agrees with the reviewer's own vote
+Measure how often the sentiment label agrees with the reviewer's own vote
 (Steam's voted_up field: Recommended or Not recommended).
 
 Usage (from the project root, after running score_sentiment.py):
@@ -28,7 +28,7 @@ def pct(part: int, whole: int) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compare VADER sentiment labels to Steam's voted_up.")
+    parser = argparse.ArgumentParser(description="Compare sentiment labels to Steam's voted_up.")
     parser.add_argument("app_id", type=int, nargs="?", help="only evaluate this game (default: all games)")
     args = parser.parse_args()
 
@@ -56,8 +56,8 @@ def main() -> None:
 
     print(f"Comparing {total:,} scored reviews ({scope})\n")
 
-    # Each row: how VADER labeled the reviews that got that Steam vote (rows add up to 100%).
-    print(f"{'Steam vote':<24}{'VADER: positive':>16}{'neutral':>10}{'negative':>10}")
+    # Each row: how the model labeled the reviews that got that Steam vote (rows add up to 100%).
+    print(f"{'Steam vote':<24}{'Model: positive':>16}{'neutral':>10}{'negative':>10}")
     for name, vote, n in (("Recommended", True, up), ("Not recommended", False, down)):
         cells = [pct(counts[vote].get(label, 0), n) for label in LABELS]
         print(f"{f'{name} ({n:,})':<24}{cells[0]:>16}{cells[1]:>10}{cells[2]:>10}")

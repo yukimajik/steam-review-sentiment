@@ -133,7 +133,7 @@ class Summary(BaseModel):
     positive_pct: float
     neutral_pct: float
     negative_pct: float
-    agreement_pct: float  # VADER's label matches the player's vote; neutral counts as a miss
+    agreement_pct: float  # the model's label matches the player's vote; neutral counts as a miss
     baseline_pct: float   # what always guessing the more common vote would score
 
 
@@ -143,7 +143,7 @@ SUMMARY_SQL = """
            count(*) FILTER (WHERE sentiment_label = 'neutral'),
            count(*) FILTER (WHERE sentiment_label = 'negative'),
            count(*) FILTER (WHERE voted_up),
-           -- agreement: VADER positive = Recommended, VADER negative = Not recommended
+           -- agreement: positive label = Recommended, negative label = Not recommended
            count(*) FILTER (WHERE (voted_up AND sentiment_label = 'positive')
                                OR (NOT voted_up AND sentiment_label = 'negative'))
     FROM reviews
@@ -153,7 +153,7 @@ SUMMARY_SQL = """
 
 @app.get("/games/{app_id}/summary", response_model=Summary)
 def game_summary(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
-    """Review count, sentiment split, and how often VADER agrees with the players' own votes."""
+    """Review count, sentiment split, and how often the model's labels match the players' own votes."""
     total, positive, neutral, negative, recommended, agree = conn.execute(SUMMARY_SQL, (app_id,)).fetchone()
     if total == 0:
         raise no_reviews(app_id)
@@ -172,7 +172,7 @@ def game_summary(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_
 
 class TrendMonth(BaseModel):
     month: str           # e.g. "2026-08"
-    avg_compound: float  # average VADER score, -1 to +1
+    avg_compound: float  # average model score: -1 (likely Not recommended) to +1 (likely Recommended)
     review_count: int    # so a month with a handful of reviews isn't read like one with hundreds
 
 

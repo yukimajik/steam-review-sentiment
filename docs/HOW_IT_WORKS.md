@@ -1,6 +1,6 @@
 # How It Works
 
-A learning guide to this project: what each piece does, how data moves through it, why it was built this way, and how to talk about it in an interview. Every number here comes from a real run on this project's data (2,000 reviews each of Portal 2 and Cities: Skylines II, fetched October 2026).
+A learning guide to this project: what each piece does, how data moves through it, why it was built this way, and how to talk about it in an interview. Every number here comes from a real run on this project's data. That started as 2,000 reviews each of Portal 2 and Cities: Skylines II, and grew to 16,500 reviews from 15 games (fetched October 2026).
 
 **Built so far:**
 - Phase 1: fetch reviews into PostgreSQL.
@@ -8,7 +8,8 @@ A learning guide to this project: what each piece does, how data moves through i
 - Phase 3: FastAPI backend in Docker, with tests.
 - Phase 4: React dashboard.
 - Then: search by game name instead of app ID.
-- Then: an experiment comparing VADER with a transformer and a trained classifier. The app still uses VADER until we decide.
+- Then: an experiment comparing VADER with a transformer and a trained classifier.
+- Then: the app switched from VADER to the trained classifier (TF-IDF + logistic regression).
 
 ---
 
@@ -22,15 +23,17 @@ A learning guide to this project: what each piece does, how data moves through i
 | `backend/app/main.py` | The API: four endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
 | `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors) and searches the store by name. Both share one retry function that respects rate limits. |
 | `backend/app/search.py` | Game search on top of Steam's store search: a one-hour cache and the typo fallback. |
-| `backend/app/sentiment.py` | Cleans review text and scores it with VADER, then turns the score into positive / neutral / negative. |
+| `backend/app/sentiment.py` | Cleans review text and scores it with the trained classifier, then turns the score into positive / neutral / negative. |
+| `backend/app/sentiment_model.pkl` | The trained classifier (1.8 MB): the TF-IDF vocabulary, the word weights, and the neutral band. Built by `train_model.py`. |
 | `backend/app/db.py` | Saves reviews (skipping duplicates) and scores unscored reviews in batches. Shared by the API and the scripts. |
 | `backend/scripts/fetch_reviews.py` | Command-line version of fetching (without scoring). |
-| `backend/scripts/score_sentiment.py` | Command-line scoring of unscored reviews; `--rescore` redoes all. |
-| `backend/scripts/evaluate_sentiment.py` | Prints a detailed table of how VADER's labels compare to players' votes. |
+| `backend/scripts/score_sentiment.py` | Command-line scoring of unscored reviews; `--rescore` redoes all (e.g. after retraining). |
+| `backend/scripts/train_model.py` | Trains the classifier from the reviews in the database: a held-out check on 4 unseen games, then the final model on everything. |
+| `backend/scripts/evaluate_sentiment.py` | Prints a detailed table of how the stored labels compare to players' votes. |
 | `backend/experiments/compare_models.py` | The model comparison experiment: VADER vs. a pretrained transformer vs. TF-IDF + logistic regression, on games held out from training. Writes `results.md`. |
-| `backend/experiments/requirements.txt` | The experiment's extra packages (PyTorch, transformers, scikit-learn). The app and its Docker image don't use them. |
+| `backend/experiments/requirements.txt` | The experiment's extra packages (VADER, PyTorch, transformers). The app and its Docker image don't use them. |
 | `backend/experiments/results.md` | The latest comparison report, written by the script. |
-| `backend/tests/` | 44 pytest tests: `test_api.py` (endpoints), `test_steam.py` (retries and errors), `test_sentiment.py` (scoring), plus shared setup in `conftest.py` and `helpers.py`. |
+| `backend/tests/` | 61 pytest tests: `test_api.py` (endpoints), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), plus shared setup in `conftest.py` and `helpers.py`. |
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
@@ -50,7 +53,7 @@ A learning guide to this project: what each piece does, how data moves through i
 | `review_text` | What the player wrote |
 | `voted_up` | The player's thumbs up (Recommended) or down (Not recommended) |
 | `playtime_at_review_minutes`, `helpful_votes`, `created_at` | Extra details from Steam |
-| `sentiment_compound` | VADER's score, from −1 (most negative) to +1 (most positive) |
+| `sentiment_compound` | The model's score, from −1 (surely Not recommended) to +1 (surely Recommended): 2 × P(Recommended) − 1. Named after VADER's "compound" score, which it held originally. |
 | `sentiment_label` | `positive`, `neutral` or `negative`, derived from the score |
 
 ---
@@ -66,8 +69,8 @@ A learning guide to this project: what each piece does, how data moves through i
 5. **Next pages.** Steam's response includes a cursor pointing at the next page. We wait 1 second (to be polite) and ask again, until we hit `max_reviews`, get an empty page, or Steam repeats the cursor.
 6. **If Steam fails.** Network errors, rate limits (`429`) and server errors (`5xx`) are retried up to 3 times. Anything else (like `404`) fails at once. If it still fails, the reviews already saved get scored and the API returns `502`.
 7. **Nothing found.** If Steam had zero reviews, the API returns `404` saying the app may not exist or has no reviews yet. Steam gives the identical answer ("success", zero reviews) for an app ID that doesn't exist and for a real app with no reviews, such as a game demo, so the API can't tell which it is.
-8. **Scoring.** `db.score_reviews` reads this game's unscored reviews 1,000 at a time, and `sentiment.score` cleans each text and runs VADER. Scores and labels are written back, committing each batch.
-9. **Response.** `{"fetched": 2000, "new": 2000, "scored": 2000}`. In real runs this took 26.4 and 27.7 seconds, almost all of it waiting on Steam. Scoring 4,000 reviews takes under a second.
+8. **Scoring.** `db.score_reviews` reads this game's unscored reviews 1,000 at a time, and `sentiment.score_many` cleans the texts and scores the whole batch with the classifier in one call. Scores and labels are written back, committing each batch.
+9. **Response.** `{"fetched": 2000, "new": 2000, "scored": 2000}`. In real runs this took 26.4 and 27.7 seconds, almost all of it waiting on Steam. Re-scoring all 16,500 stored reviews took 3.1 seconds.
 
 ### Reading: summary, trend, reviews
 
@@ -122,9 +125,12 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 
 | Choice | Why | Alternatives |
 |---|---|---|
-| **VADER** | No training, instant, explainable word by word, built for short informal text | TextBlob (similar idea, less tuned for social text); a transformer model like a fine-tuned RoBERTa (far more accurate on context and sarcasm, but slower and needs a GPU for speed); an LLM (best understanding, but costs per review) |
-| **Remove BBCode tags and ♥ before scoring** | `[b]great[/b]` scored 0, and `this game is ♥♥♥♥` scored +0.96 because VADER reads Steam's profanity censor as hearts | Score raw text (measurably worse on Not recommended reviews) |
-| **±0.05 thresholds** | VADER's authors recommend them | Tune them on our data, at the risk of overfitting to two games |
+| **TF-IDF + logistic regression, trained on our reviews** (replaced VADER) | On 4 games it never trained on: 85.7% accuracy vs. VADER's 83.3% (baseline 81.0%), and it catches far more complaints. Fits the free tier (the API uses 120 MiB with it loaded) and scores ~25,000 reviews/s | VADER (no training, but its general word list misreads gaming words); the twitter-roberta transformer (best at catching complaints, but peaked at 1.7–2.5 GB); an LLM (costs per review) |
+| **It predicts the player's vote, not the text's tone** | `voted_up` is the only label we have at scale, so the model learns what recommending players write. "great game, too bad the servers never work" comes out negative | Hand-labeling tone (slow, and our judgement) |
+| **Neutral band: P(Recommended) between 0.39 and 0.61** | The narrowest band where the remaining labels are right at least 90% of the time, chosen with out-of-fold predictions so it never sees test data. On unseen games those labels were 90.9% accurate | Two labels only (no neutral, but a two-slice pie and no Neutral filter); a band picked by eye |
+| **No recognizable words → neutral** | Empty, emoji-only or other-language reviews would otherwise get the model's built-in lean toward Recommended, which isn't evidence. 239 of 4,000 held-out reviews were like this. VADER also scored these 0 | Let the lean decide (raises agreement, but labels guesses as "positive") |
+| **Model saved as a pickle in the repo, with the scikit-learn version checked on load** | The API just loads a 1.8 MB file; `train_model.py` rebuilds it. A pickle only loads correctly with the scikit-learn version that made it, so a mismatch fails loudly | Training at startup (needs the database and ~25 s on every boot); exporting weights to JSON (no scikit-learn needed, but re-implementing TF-IDF exactly) |
+| **Remove BBCode tags and ♥ before scoring** | Formatting tags and Steam's profanity censor aren't the reviewer's words. (With VADER, `this game is ♥♥♥♥` scored +0.96 because it read the hearts as love) | Score raw text |
 | **Store both score and label** | The score keeps the detail (for averages); the label is what the dashboard filters on | Store only the score and compute labels in every query |
 | **Scoring is its own step** | Can re-score everything after changing the cleanup or thresholds, without re-fetching | Score inside the insert: simpler, but no way to redo scores |
 | **Score in batches of 1,000, walking IDs in order** | Memory stays flat however many reviews there are; works for both "unscored only" and "rescore all" | Load everything at once (fine for 4,000 reviews, not for 4 million) |
@@ -175,7 +181,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Recharts** | Declarative React components for charts, with tooltips and responsive sizing built in | Chart.js (not React-native); D3 (full control, much more code) |
 | **Blue / gray / red for positive / neutral / negative** | Sentiment is an *ordered* scale, so it gets a diverging palette: opposite poles plus a neutral midpoint. Checked with a script, not by eye: worst colorblind separation ΔE 8.7 (target ≥ 8), every color ≥ 3:1 contrast | Green/red (the classic pair red-green colorblind readers can't separate); three unrelated hues (hides the order) |
 | **Legend with values next to the pie, data table under the line chart** | Every number is readable without hovering, and identity never relies on color alone | Tooltips only (hidden on touch screens and to screen readers) |
-| **Line chart's y-axis fixed at −1 to +1, with a line at 0** | Shows where sentiment really sits on VADER's scale. A zoomed-in axis would make a 0.35 → 0.38 wobble look dramatic | Auto-scaled axis |
+| **Line chart's y-axis fixed at −1 to +1, with a line at 0** | Shows where sentiment really sits on the model's scale. A zoomed-in axis would make a 0.35 → 0.38 wobble look dramatic | Auto-scaled axis |
 | **Plain CSS with variables, no UI library** | Small, readable, nothing to learn beyond CSS; colors defined once | Tailwind; a component library like MUI |
 | **Results tagged with the request they answer** | "Loading" is derived (latest result isn't for the current request), and a slow old response can never overwrite a newer one | Setting a `loading` flag inside the effect (an extra render, and the linter warns about it) |
 | **`AbortController` on every request** | Searching again cancels the old request instead of racing it | Ignoring stale responses after they arrive |
@@ -215,7 +221,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 
 **Rate limiting / `Retry-After`.** Servers limit how fast you can call them. A `429` means "slow down", and the `Retry-After` header can say for how long.
 
-**VADER.**
+**VADER** (the app's original model).
 - Each word in a list of ~7,500 words and emoticons has a human-rated score.
 - Rules adjust the scores:
   - "not" flips a word.
@@ -273,6 +279,8 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 
 ## 5. Results so far
 
+### With VADER (the original model)
+
 On Cities: Skylines II (2,000 newest reviews):
 
 ```
@@ -304,19 +312,33 @@ All numbers below are from `backend/experiments/results.md`.
 
 | | Accuracy | Not recommended caught | Speed (this Mac) | Peak memory |
 |---|---|---|---|---|
-| VADER (current) | 83.3% | 50.5% | 2,840 reviews/s | 51 MB |
-| Transformer (twitter-roberta) | 83.8% | **84.6%** | 42 reviews/s | **2,499 MB** (1,982 MB in an earlier identical run) |
-| TF-IDF + logistic regression | **85.7%** | 77.5% | 25,233 reviews/s | 156 MB |
+| VADER (previous) | 83.3% | 50.5% | 2,797 reviews/s | 50 MB |
+| Transformer (twitter-roberta) | 83.8% | **84.6%** | 36 reviews/s | **1,682 MB** (1,982 and 2,499 MB in two earlier identical runs) |
+| TF-IDF + logistic regression | **85.7%** | 77.5% | 24,832 reviews/s | 153 MB |
 
 - **The bug check found no bug.** All 6,500 stored labels matched their scores, and re-scoring reproduced every stored value. The mislabels come from VADER's general-purpose word list: "insane", "fights" and "combat" count as negative, and "sick" too.
 - **VADER catches only half the complaints.**
-- **The transformer understands context best.** It scored "Zero regrets… insane boss fights" at +0.98. But it misreads gamer sarcasm ("10/10 would get scammed again" came out negative). It also peaked at 2.0–2.5 GB over two runs, 4–5× Render's free plan (512 MB).
+- **The transformer understands context best.** It scored "Zero regrets… insane boss fights" at +0.98. But it misreads gamer sarcasm ("10/10 would get scammed again" came out negative). It also peaked at 1.7–2.5 GB across three runs, 3–5× Render's free plan (512 MB).
 - **The trained classifier is the most accurate, small and fast.** It learned gaming slang ("this game is sick" came out positive). But it predicts the *vote*, not the text's tone: "great game, too bad the servers never work" came out negative.
+
+### After switching to the classifier
+
+The training script's held-out check, with the app's three labels on the same 4 unseen games, compared with VADER's stored labels on those games:
+
+| On 4 games the model never trained on | VADER | Trained classifier |
+|---|---|---|
+| Agreement (neutral counts as a miss) | 65.1% | **68.8%** |
+| Labeled neutral | 21.3% | 24.4% |
+| Accuracy of positive and negative labels | 82.6% | **90.9%** |
+| Not recommended reviews labeled negative | 49.3% | **63.9%** |
+
+- **The dashboard's numbers for the 15 stored games are optimistic,** because the final model trained on them. On all of them together, agreement is 79.8%, and 87.5% of Not recommended reviews are labeled negative. For a newly fetched game, expect numbers like the held-out check above.
+- **Running it in the API:** memory went from about 50 MiB to **120 MiB** with the model loaded, well inside the free tier's 512 MB. The image is 637 MB.
 
 ## 6. Interview questions
 
 **Walk me through the architecture.**
-A FastAPI service and PostgreSQL, run together with Docker Compose. `POST /games/{id}/fetch` pulls reviews from Steam's API page by page, saves them without duplicates, and scores each one with VADER. Three `GET` endpoints serve a summary, a monthly trend, and filtered, paginated reviews to a React frontend. The fetching and scoring logic lives in one shared package that both the API and the command-line scripts use.
+A FastAPI service and PostgreSQL, run together with Docker Compose. `POST /games/{id}/fetch` pulls reviews from Steam's API page by page, saves them without duplicates, and labels each one with a TF-IDF + logistic regression classifier trained on Steam reviews. Three `GET` endpoints serve a summary, a monthly trend, and filtered, paginated reviews to a React frontend. The fetching and scoring logic lives in one shared package that both the API and the command-line scripts use.
 
 **What happens if you fetch the same game twice?**
 Nothing bad. Each review has Steam's unique ID as the primary key, and inserts use `ON CONFLICT DO NOTHING`, so known reviews are skipped. The response's `new` count shows how many were actually added. A test covers this: the second fetch returns `new: 0`.
@@ -327,17 +349,22 @@ Nothing bad. Each review has Steam's unique ID as the primary key, and inserts u
 - **If it still fails,** the API returns `502`, so the client knows the problem is upstream. Pages already saved are kept and scored.
 - **I pause 1 second between pages**, so I'm unlikely to be rate limited in the first place.
 
-**Why VADER, and what are its limits?**
-It needs no training data, scores 4,000 reviews in under a second, and every score can be explained word by word. That made it a good first model and benchmark. Its limit is that it only matches words. It can't handle:
-- Sarcasm.
-- Opinions aimed at something else ("the first game is better").
-- Mixed reviews.
-- Slang or other languages.
+**Why did you start with VADER, and why did you replace it?**
+- **Why start with it:** it needs no training data, is very fast, and every score can be explained word by word. That made it a good first model and a benchmark.
+- **Why replace it:** its general-purpose word list doesn't fit games. "insane", "fights", "combat" and "sick" all count as negative, so it missed half the complaints on unseen games.
+- **What replaced it:** a TF-IDF + logistic regression classifier trained on 16,500 Steam reviews, using each player's own vote as the label.
+- **The result,** on 4 games it never saw: positive and negative labels are right 90.9% of the time (VADER 82.6%), and it catches 63.9% of Not recommended reviews (VADER 49.3%).
+- **The tradeoff:** it predicts whether someone recommends the game, not the text's tone, and it has to be retrained as data grows.
 
-On our data it agrees with players 69.2% of the time on Cities: Skylines II, below the 75.0% baseline. The next step would be a transformer model fine-tuned on reviews, judged with the same evaluation.
+**Your dashboard says agreement is 79.8%, but you quote 68.8%. Which is right?**
+Both, for different questions.
+- **79.8%** is measured on the reviews the model trained on, so it's optimistic: the model has partly memorized them.
+- **68.8%** comes from 4 games held out of training. That's the honest estimate for a game someone fetches tomorrow.
+
+I'd always quote the held-out number.
 
 **How do you know whether your sentiment model is any good?**
-I compare its label to the player's own thumbs up/down, which is free labeled data. Raw agreement is misleading because most reviews are positive, so I always show the majority-class baseline next to it. I also break agreement down by class: VADER catches only 43.1% of Cities: Skylines II's Not recommended reviews as negative, and those are the reviews a dashboard most needs to surface.
+I compare its label to the player's own thumbs up/down, which is free labeled data. Raw agreement is misleading because most reviews are positive, so I always show the majority-class baseline next to it. I also break agreement down by class, because Not recommended reviews are the ones a dashboard most needs to surface. VADER caught only 43.1% of Cities: Skylines II's as negative, which is what led to replacing it.
 
 **Isn't the thumbs-up vote a flawed ground truth?**
 Yes. It's a recommendation, not a measure of the text's tone. "Nice game but too lag and crashes :(" is Recommended, yet the text is negative. So agreement can't reach 100% even for a perfect sentiment model. It's a proxy, but a consistent one, which is what you need to compare models.
@@ -412,14 +439,14 @@ I measured instead of guessing.
 2. **I compared three approaches** on 4,000 reviews from four games the trained model never saw, using each player's thumbs up/down as the answer key.
 3. **The headline accuracy barely separated them** (83.3%, 83.8%, 85.7% against an 81.0% baseline), because most reviews are positive.
 4. **What separated them was how many complaints each caught:** VADER 50.5%, the transformer 84.6%, TF-IDF 77.5%.
-5. **Then I weighed fit:** the transformer peaked at 2.0–2.5 GB against a 512 MB free tier, while TF-IDF peaked at 156 MB and ran about 600× faster than the transformer.
+5. **Then I weighed fit:** the transformer peaked at 1.7–2.5 GB against a 512 MB free tier, while TF-IDF peaked at about 155 MB and ran hundreds of times faster (about 690× in the latest run).
 
 **Why test on whole games instead of a random split?**
 A classifier trained on our reviews can memorize game-specific words: character names, "Todd", a game's title. A random split would put the same games in training and test and flatter it. Holding out whole games measures what the app actually does, which is score reviews for games it has never seen.
 
 **Why not just use the transformer, since it understands context best?**
-- It needed **2.0–2.5 GB** at peak on my Mac over two runs, 4–5× the free tier's 512 MB, before counting the rest of the API.
-- It scored **38–42 reviews/s** using my Mac's whole CPU. The free tier has 0.1 CPU.
+- It needed **1.7–2.5 GB** at peak on my Mac across three runs, 3–5× the free tier's 512 MB, before counting the rest of the API.
+- It scored **36–42 reviews/s** using my Mac's whole CPU. The free tier has 0.1 CPU.
 - To use it, I'd score reviews outside the API, use a compressed version (and re-test it), or pay for a bigger server.
 - It also misreads gamer sarcasm like "10/10 would get scammed again". "Most accurate in general" isn't automatically "best for this data".
 

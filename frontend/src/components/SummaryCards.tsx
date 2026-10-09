@@ -18,13 +18,14 @@ export function SummaryCards({ summary }: { summary: Summary }) {
       <div className="card stat">
         <p className="stat-label">Positive</p>
         <p className="stat-value">{formatPct(summary.positive_pct)}</p>
-        <p className="stat-note">of reviews, as scored by VADER</p>
+        <p className="stat-note">of reviews labeled positive by the model</p>
       </div>
       <div className="card stat">
         <p className="stat-label">Model agreement</p>
         <p className="stat-value">{formatPct(summary.agreement_pct)}</p>
         <p className="stat-note">
-          {comparison} the {formatPct(summary.baseline_pct)} baseline from always guessing the more common vote
+          How often the label matches the player’s own vote. {comparison} the {formatPct(summary.baseline_pct)} you’d get
+          by always guessing the more common vote.
         </p>
       </div>
     </div>
