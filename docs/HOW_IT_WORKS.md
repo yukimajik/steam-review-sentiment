@@ -10,6 +10,7 @@ A learning guide to this project: what each piece does, how data moves through i
 - Then: search by game name instead of app ID.
 - Then: an experiment comparing VADER with a transformer and a trained classifier.
 - Then: the app switched from VADER to the trained classifier (TF-IDF + logistic regression).
+- Then: a topic breakdown. Each review is tagged with the topics it mentions (performance, bugs, price/value, story, gameplay, graphics, multiplayer/servers, content/length) using keyword lists, and each topic gets its own sentiment.
 
 ---
 
@@ -19,28 +20,29 @@ A learning guide to this project: what each piece does, how data moves through i
 |---|---|
 | `docker-compose.yml` | Starts two containers: `db` (PostgreSQL 17) and `api` (the FastAPI app). The API waits until the database is healthy. |
 | `.env.example` | Template for `.env`, which holds the database password and settings. `.env` is git-ignored so secrets never get committed. |
-| `db/init.sql` | Creates the `reviews` table and adds the sentiment columns. Runs automatically on a brand-new database and is safe to re-run on an existing one. |
-| `backend/app/main.py` | The API: four endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
+| `db/init.sql` | Creates the `reviews` table, adds the sentiment columns, and creates the `review_topics` table. Runs automatically on a brand-new database and is safe to re-run on an existing one. |
+| `backend/app/main.py` | The API: six endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
 | `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors) and searches the store by name. Both share one retry function that respects rate limits. |
 | `backend/app/search.py` | Game search on top of Steam's store search: a one-hour cache and the typo fallback. |
 | `backend/app/sentiment.py` | Cleans review text and scores it with the trained classifier, then turns the score into positive / neutral / negative. |
+| `backend/app/topics.py` | The topic keyword lists. Cuts a review into parts (sentences, list items, and at "but"/"however"), finds the parts that mention each topic, and scores just those parts with the classifier. |
 | `backend/app/sentiment_model.pkl` | The trained classifier (1.8 MB): the TF-IDF vocabulary, the word weights, and the neutral band. Built by `train_model.py`. |
-| `backend/app/db.py` | Saves reviews (skipping duplicates) and scores unscored reviews in batches. Shared by the API and the scripts. |
+| `backend/app/db.py` | Saves reviews (skipping duplicates), and scores and topic-tags unscored reviews in batches. Shared by the API and the scripts. |
 | `backend/scripts/fetch_reviews.py` | Command-line version of fetching (without scoring). |
-| `backend/scripts/score_sentiment.py` | Command-line scoring of unscored reviews; `--rescore` redoes all (e.g. after retraining). |
+| `backend/scripts/score_sentiment.py` | Command-line scoring and topic tagging of unscored reviews; `--rescore` redoes all (after retraining the model or changing the topic keywords). |
 | `backend/scripts/train_model.py` | Trains the classifier from the reviews in the database: a held-out check on 4 unseen games, then the final model on everything. |
 | `backend/scripts/evaluate_sentiment.py` | Prints a detailed table of how the stored labels compare to players' votes. |
 | `backend/experiments/compare_models.py` | The model comparison experiment: VADER vs. a pretrained transformer vs. TF-IDF + logistic regression, on games held out from training. Writes `results.md`. |
 | `backend/experiments/requirements.txt` | The experiment's extra packages (VADER, PyTorch, transformers). The app and its Docker image don't use them. |
 | `backend/experiments/results.md` | The latest comparison report, written by the script. |
-| `backend/tests/` | 61 pytest tests: `test_api.py` (endpoints), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), plus shared setup in `conftest.py` and `helpers.py`. |
+| `backend/tests/` | 95 pytest tests: `test_api.py` (endpoints), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), plus shared setup in `conftest.py` and `helpers.py`. |
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
 | `frontend/src/App.tsx` | The dashboard page: the picked game (name, cover, app ID), loading its data, the fetch button, and which state to show (loading, not stored, error, ready). |
 | `frontend/src/api.ts` | Calls the API, mirrors its response shapes as TypeScript types, and turns failures into messages a person can act on. |
-| `frontend/src/format.ts` | Number, date and score formatting, sentiment colors and labels, and stripping Steam's formatting tags for display. |
-| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `SummaryCards`, `SentimentPie`, `TrendChart`, `ReviewList`: one file per part of the page. |
+| `frontend/src/format.ts` | Number, date and score formatting, sentiment colors and labels, topic names, and stripping Steam's formatting tags for display. |
+| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `SummaryCards`, `SentimentPie`, `TrendChart`, `TopicBreakdown` (the topic chart and example excerpts), `ReviewList`: one file per part of the page. |
 | `frontend/src/index.css` | All styling: color tokens, layout, and the phone/tablet/desktop breakpoints. |
 | `frontend/package.json` | Frontend dependencies (React, Recharts, Vite, TypeScript, Oxlint) and scripts (`dev`, `build`, `lint`). |
 
@@ -56,6 +58,17 @@ A learning guide to this project: what each piece does, how data moves through i
 | `sentiment_compound` | The model's score, from −1 (surely Not recommended) to +1 (surely Recommended): 2 × P(Recommended) − 1. Named after VADER's "compound" score, which it held originally. |
 | `sentiment_label` | `positive`, `neutral` or `negative`, derived from the score |
 
+### The `review_topics` table
+
+One row per review per topic it mentions. A review that mentions nothing has no rows.
+
+| Column | Meaning |
+|---|---|
+| `recommendation_id` | Which review (deleting the review deletes its rows) |
+| `topic` | `performance`, `bugs`, `price`, `story`, `gameplay`, `graphics`, `multiplayer` or `content` |
+| `excerpt` | The parts of the review that mention the topic, joined with " … " |
+| `sentiment_score`, `sentiment_label` | The classifier's verdict on the excerpt alone: positive = praise, negative = complaint |
+
 ---
 
 ## 2. How data flows
@@ -69,7 +82,9 @@ A learning guide to this project: what each piece does, how data moves through i
 5. **Next pages.** Steam's response includes a cursor pointing at the next page. We wait 1 second (to be polite) and ask again, until we hit `max_reviews`, get an empty page, or Steam repeats the cursor.
 6. **If Steam fails.** Network errors, rate limits (`429`) and server errors (`5xx`) are retried up to 3 times. Anything else (like `404`) fails at once. If it still fails, the reviews already saved get scored and the API returns `502`.
 7. **Nothing found.** If Steam had zero reviews, the API returns `404` saying the app may not exist or has no reviews yet. Steam gives the identical answer ("success", zero reviews) for an app ID that doesn't exist and for a real app with no reviews, such as a game demo, so the API can't tell which it is.
-8. **Scoring.** `db.score_reviews` reads this game's unscored reviews 1,000 at a time, and `sentiment.score_many` cleans the texts and scores the whole batch with the classifier in one call. Scores and labels are written back, committing each batch.
+8. **Scoring and topics.** `db.score_reviews` reads this game's unscored reviews 1,000 at a time.
+   - `sentiment.score_many` cleans the texts and scores the whole batch with the classifier in one call. Scores and labels are written back.
+   - `topics.tag_many` finds the topics in each review and scores each topic's excerpt, again in one call. Old topic rows for these reviews are deleted and the new ones inserted, in the same transaction as the scores.
 9. **Response.** `{"fetched": 2000, "new": 2000, "scored": 2000}`. In real runs this took 26.4 and 27.7 seconds, almost all of it waiting on Steam. Re-scoring all 16,500 stored reviews took 3.1 seconds.
 
 ### Reading: summary, trend, reviews
@@ -77,7 +92,8 @@ A learning guide to this project: what each piece does, how data moves through i
 - **Summary** runs one SQL query that counts everything at once (`count(*) FILTER (WHERE ...)`): totals per label, Recommended votes, and agreements. Python turns the counts into percentages.
 - **Trend** groups reviews by the month they were posted (in UTC) and averages the score.
 - **Reviews** runs two queries: one counts matching reviews (for page numbers), one fetches the requested page, newest first.
-- All three only look at **scored** reviews and return `404` if the game has none.
+- **Topics** runs three queries: the number of scored reviews; praise, neutral and complaint counts per topic; and the top 3 praise and complaint excerpts per topic, picked with a window function (`row_number() OVER (PARTITION BY topic, label ...)`). Python fills in zeros for topics nobody mentions and sorts by mentions.
+- All four only look at **scored** reviews and return `404` if the game has none.
 
 ### The command-line scripts
 
@@ -86,11 +102,12 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 ### In the browser
 
 1. You type part of a game's name. `GameSearch` waits until you pause typing (300 ms) and calls `/search` (described in the next section). It shows up to 10 matches with covers. Picking one hands its app ID, name and cover to `App`.
-2. `App` calls `/summary` and `/trend` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
+2. `App` calls `/summary`, `/trend` and `/topics` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
 3. **404** means the game isn't stored. The page offers "Fetch reviews from Steam", which calls `POST /fetch?max_reviews=1000`. In a real run that took 12.8 seconds, then the dashboard loaded.
 4. **Any other error** shows a message saying what to do (start the API, start the database, try again later) with a "Try again" button.
-5. **Success** draws the summary cards, the pie, and the line chart. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment.
-6. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
+5. **Success** draws the summary cards, the pie, the line chart and the topic section. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment.
+6. **The topic section** starts on the most-mentioned topic. Clicking a bar or a topic button shows that topic's praise and complaint excerpts.
+7. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
 
 ### Searching for a game: `GET /search?q=cyberpnk`
 
@@ -134,7 +151,21 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Store both score and label** | The score keeps the detail (for averages); the label is what the dashboard filters on | Store only the score and compute labels in every query |
 | **Scoring is its own step** | Can re-score everything after changing the cleanup or thresholds, without re-fetching | Score inside the insert: simpler, but no way to redo scores |
 | **Score in batches of 1,000, walking IDs in order** | Memory stays flat however many reviews there are; works for both "unscored only" and "rescore all" | Load everything at once (fine for 4,000 reviews, not for 4 million) |
-| **`init.sql` re-runnable (`ADD COLUMN IF NOT EXISTS`)** | Adds new columns without deleting data | A migration tool like Alembic (better once there are many schema changes); wiping the database |
+| **`init.sql` re-runnable (`ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`)** | Adds new columns and tables without deleting data | A migration tool like Alembic (better once there are many schema changes); wiping the database |
+
+### Topics
+
+| Choice | Why | Alternatives |
+|---|---|---|
+| **Keyword lists** | Simple, instant, no memory cost, and you can always see *why* a review got a tag. A good first version to measure smarter methods against | **Trained topic classifier** (one TF-IDF model per topic): learns words we didn't list, but needs hundreds of hand-labeled reviews per topic, and we have none. **Zero-shot transformer** ("is this about performance?"): no labels needed and understands paraphrases, but the transformer we measured peaked at 1.7–2.5 GB vs. the free tier's 512 MB. **Embeddings + similarity**: catches "my GPU is crying", but needs a neural model too. **Topic modeling** (LDA, BERTopic): finds its own topics, which won't line up with the 8 we want and need naming by hand. **An LLM API**: best with mixed reviews and sarcasm, but costs money per review, needs an API key, and adds rate limits |
+| **Every keyword checked against the stored reviews; lookalikes dropped** | Favors tags that are right over catching everything. Dropped or narrowed after reading real matches: "refund" (mostly "I'd refund if I could", a verdict, not price), a bare "worth" ("worth every hour"), a bare "hours" (playtime), "ping" (the in-game marker), "optimistic", "performances" (acting), "graphics card", "as of writing this", "content creators", "freezer" | Long lists of every related word: more matches, many of them wrong |
+| **Whole words only, any case** | "lag" mustn't match "flagship", or "bug" match "debug" | Plain substring search |
+| **Each topic's sentiment comes from only the parts that mention it** | In "Great game, but it runs terribly", performance is a complaint even though the review is positive. 27.3% of topic tags got a different label than the whole review, and 397 Recommended reviews contain a complaint this way | The whole review's label (hides exactly those complaints); the player's vote (it's about the whole game too) |
+| **Cut at sentence ends, line breaks, list items, semicolons, "but" and "however"** | "X, but Y" is the most common way one sentence mixes praise and a complaint | Sentences only (keeps "great game but laggy" together); a proper sentence parser like spaCy (another big dependency) |
+| **The same classifier scores the excerpts** | No new model, no extra memory | VADER for excerpts (scores tone, but misreads gaming words); a model trained on hand-labeled excerpts (better, needs labels) |
+| **Unticked boxes in Steam's checkbox template are ignored** | In a template like "☐ Too much grind / ☑ Average grind", the unticked options aren't the reviewer's opinion. 19 of the 17,554 stored reviews use it | Keep them (would tag complaints nobody made) |
+| **Tags stored in a table, computed while scoring** | The topic endpoint is then a cheap SQL query (21–56 ms in real runs), which matters on a 0.1-CPU server. Changing a keyword means re-running `score_sentiment.py --rescore` | Computing topics on every request: always uses the latest keywords and needs no table, but re-reads and re-scores every review on every page load |
+| **A new `sentiment_score` column instead of reusing the name `sentiment_compound`** | "compound" is a VADER term that no longer fits; the reviews table keeps its old name only to avoid breaking the API | Copying the old name for consistency |
 
 ### API
 
@@ -147,6 +178,8 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Agreement counts neutral as a miss, plus a baseline** | Players can't vote neutral, so neutral is never "right". The baseline shows whether agreement beats a model that does nothing | Exclude neutral reviews (flatters the score: 86.2% vs 68.3% on all data) |
 | **Trend months in UTC, with review counts** | Results don't depend on the server's time zone; counts show which months to trust | Server time zone; averages alone |
 | **Page-number pagination, ties broken by ID** | Easy for a table with page numbers; the ID tie-breaker stops reviews posted in the same second from appearing on two pages | Keyset/cursor pagination: faster on deep pages and stable while data changes, but no "jump to page 7" |
+| **Topics: all 8 always returned, most mentioned first, with counts rather than percentages** | The frontend can show "nobody mentions multiplayer" without guessing which topics exist, and computes shares from the counts and the total | Only topics with mentions; percentages from the API |
+| **Topic examples: up to 3 per side, most helpful votes first, then most confident; neutral never shown** | Helpful votes are other players vouching for a review; confidence breaks ties among the many reviews with no votes yet | Random examples; most recent; longest |
 | **`404` for a game with no reviews, empty list for a filter with no matches** | "This game isn't loaded" is an error; "no negative reviews" is a valid answer | Empty responses everywhere (the frontend couldn't tell the two apart) |
 | **CORS for named origins from `.env`** | Only your frontend's address can call the API from a browser | `*` (any website could call it) |
 
@@ -196,7 +229,10 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Search disabled during a fetch** | The fetch result can't land on a different game than the one shown | Allowing it and tracking which game each fetch belongs to |
 | **Steam's formatting tags stripped for display** | `[spoiler]...[/spoiler]` showed up on the first page of Portal 2 reviews; same tag list the scorer uses | Show raw text; render the formatting (more code, and spoilers would need a reveal button) |
 | **Frontend runs with `npm run dev`, not in Docker yet** | Instant reloads while building; it can join Compose later | An nginx container serving the built files |
-| **One 611 kB bundle (181 kB gzipped), mostly Recharts** | Fine for a local dashboard | Load the charts separately with `import()` to make first paint faster |
+| **Topic chart: horizontal bars, complaints left in red and praise right in blue, as a share of all reviews** | Answers "what do players like and complain about most" in one view. Both sides use the same scale so they compare fairly, and topics are sorted by how often they come up | Stacked 100% bars per topic (hide how often a topic comes up); two separate charts (harder to compare a topic's two sides) |
+| **Pick a topic by clicking its bar or a topic button** | Bars are quick with a mouse; the buttons also work with a keyboard and screen readers, and show which topic is selected. The selected topic's bars stay solid and the rest fade | A dropdown; a separate topic filter on the review list (all matching reviews with paging, but another filter to manage) |
+| **Topics loaded with the summary and trend in one `Promise.all`** | One loading state for the whole dashboard; the data doesn't change while you look at it | Loading inside the component like `ReviewList` (its own spinner and error, but more code) |
+| **One 640 kB bundle (188 kB gzipped), mostly Recharts** | Fine for a local dashboard | Load the charts separately with `import()` to make first paint faster |
 
 ---
 
@@ -275,6 +311,12 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 
 **CORS, from the other side.** Our API sends CORS headers so our page can read it. Steam's store search doesn't, so no other website's page can read it. A server isn't a browser, so our backend can call Steam freely.
 
+**Keyword matching with word boundaries.** A regular expression like `(?<!\w)lag(?!\w)` matches "lag" only when no letter or digit touches it on either side, so "flagship" doesn't count.
+
+**Precision and recall, for tags.** *Precision*: of the reviews tagged "bugs", how many really talk about bugs. *Recall*: of the reviews that talk about bugs, how many got tagged. Keywords tend to have good precision and poor recall: they're usually right when they fire, but miss everything said in other words.
+
+**Aspect-based sentiment.** Instead of one feeling per review, one feeling per thing the review talks about (its *aspects*: performance, story, ...). A review can love the story and hate the servers.
+
 **Skeletons vs. fading.** Gray placeholder shapes on the first load tell you what's coming. On later loads (new page, new filter), the old content stays and fades, because swapping it for placeholders would make the page jump.
 
 ## 5. Results so far
@@ -335,10 +377,57 @@ The training script's held-out check, with the app's three labels on the same 4 
 - **The dashboard's numbers for the 15 stored games are optimistic,** because the final model trained on them. On all of them together, agreement is 79.8%, and 87.5% of Not recommended reviews are labeled negative. For a newly fetched game, expect numbers like the held-out check above.
 - **Running it in the API:** memory went from about 50 MiB to **120 MiB** with the model loaded, well inside the free tier's 512 MB. The image is 637 MB.
 
+### Topic breakdown
+
+Measured on all 17,554 stored reviews from 16 games (the 15 above plus Elden Ring).
+
+**Coverage.**
+- **27.2% of reviews mention at least one topic.**
+- **Most of the rest are very short:** 67.1% of the 12,776 untagged reviews are under 10 words ("hell yeah", "Masterpiece!").
+- **Among reviews of 20 or more words, 62.2% get a tag.**
+
+| Topic | Mentions | Praise | Neutral | Complaints |
+|---|---|---|---|---|
+| Gameplay | 1,983 | 62.3% | 22.8% | 14.8% |
+| Story | 1,438 | 70.8% | 18.6% | 10.6% |
+| Multiplayer / servers | 886 | 38.7% | 17.6% | 43.7% |
+| Bugs | 845 | 13.3% | 24.9% | 61.9% |
+| Performance | 840 | 30.2% | 29.3% | 40.5% |
+| Graphics | 783 | 62.6% | 23.1% | 14.3% |
+| Price / value | 641 | 40.4% | 26.2% | 33.4% |
+| Content / length | 611 | 46.0% | 33.1% | 20.9% |
+
+Players mostly praise gameplay, story and graphics, and mostly complain about bugs, servers and performance.
+
+**Per-topic sentiment changes the picture.** 27.3% of topic tags got a different label than their whole review.
+- **485 complaints sit inside 397 Recommended reviews,** for example "Capcom's absolute garbage optimization at launch forced me to buy a whole new PC".
+- **205 pieces of praise sit inside Not recommended reviews.**
+
+**How accurate is it?** There's no answer key for topics, so I read 50 random praise and complaint tags. That is my judgement, not a measurement against labels.
+
+| Result | Count | Examples |
+|---|---|---|
+| Clearly right | 38 | |
+| Wrong topic | 3 | in-game money ("my city is $2 million in debt") as price; "graphic settings" as graphics; a player's "performance" in matchmaking |
+| Wrong or unsupported sentiment | 4 | "Some bugs remain" as praise; "Multiplayer – 2/10" as praise; a template heading and "the movement" with no opinion at all |
+| Debatable | 5 | |
+
+**Known weaknesses, seen in real data.**
+- **Keywords can't tell meanings apart.** Hollow Knight's characters are insects: its "bugs" topic has 37 mentions, and 20 of them read as praise ("bug kills bug, peak").
+- **The classifier was trained to predict a whole review's vote, not the tone of a fragment.**
+  - The word "bug" itself has a positive weight (+0.38), probably learned from Hollow Knight's happy reviews. So "Game breaking bug" scored +0.31, which counts as praise.
+  - "no bugs" scores negative, because "no" usually appears in complaints.
+  - Words that carry the feeling themselves work well: "crashes" has a weight of −4.23.
+- **Number ratings mean nothing to it.** "Multiplayer: 2/10" isn't read as a low score.
+
+**Cost.**
+- **Memory:** the API used 119.1 MiB after scoring with the model loaded, the same as before topics (120.3 MiB).
+- **Speed:** the topic endpoint answered in 21–56 ms. Re-scoring and topic-tagging all 17,552 reviews from the command line took 6.6 s.
+
 ## 6. Interview questions
 
 **Walk me through the architecture.**
-A FastAPI service and PostgreSQL, run together with Docker Compose. `POST /games/{id}/fetch` pulls reviews from Steam's API page by page, saves them without duplicates, and labels each one with a TF-IDF + logistic regression classifier trained on Steam reviews. Three `GET` endpoints serve a summary, a monthly trend, and filtered, paginated reviews to a React frontend. The fetching and scoring logic lives in one shared package that both the API and the command-line scripts use.
+A FastAPI service and PostgreSQL, run together with Docker Compose. `POST /games/{id}/fetch` pulls reviews from Steam's API page by page, saves them without duplicates, labels each one with a TF-IDF + logistic regression classifier trained on Steam reviews, and tags the topics it mentions. Four `GET` endpoints serve a summary, a monthly trend, a topic breakdown, and filtered, paginated reviews to a React frontend. The fetching and scoring logic lives in one shared package that both the API and the command-line scripts use.
 
 **What happens if you fetch the same game twice?**
 Nothing bad. Each review has Steam's unique ID as the primary key, and inserts use `ON CONFLICT DO NOTHING`, so known reviews are skipped. The response's `new` count shows how many were actually added. A test covers this: the second fetch returns `new: 0`.
@@ -452,3 +541,37 @@ A classifier trained on our reviews can memorize game-specific words: character 
 
 **How do you keep secrets out of the code?**
 Credentials live in `.env`, which is git-ignored, with `.env.example` as a template. Docker Compose reads the same file. All SQL uses parameterized queries, so user input is never pasted into SQL.
+
+**How does the topic breakdown work?**
+1. **Find topics.** Each topic has a list of keyword patterns, matched as whole words. Each review is cut into parts at sentence ends, line breaks, list items, and words like "but".
+2. **Score each topic.** For each topic, the parts that mention it are joined into an excerpt. Only that excerpt is scored with the sentiment classifier.
+3. **Store.** The tags go into a `review_topics` table while the review is scored.
+4. **Read.** One endpoint returns per-topic counts of praise and complaints, plus the most helpful example excerpts. The dashboard shows it as a chart with complaints to the left and praise to the right.
+
+**Why keywords instead of machine learning?**
+- **They were the right first version:** instant, no extra memory on a 512 MB server, free, and every tag can be explained.
+- **The cost is recall:** they only find the words I listed, so "my GPU is crying" isn't a performance complaint.
+- **Why not the smarter options:**
+  - a trained classifier needs hundreds of hand-labeled reviews per topic, and I have none
+  - a zero-shot transformer needs the 1.7–2.5 GB I'd already measured
+  - an LLM costs money per review
+- **How I'd upgrade:** hand-label a few hundred reviews, measure the keywords' precision and recall against them, then train a classifier and compare it on the same labels.
+
+**How do you get sentiment for each topic, not just each review?**
+- **Only the parts that mention a topic are scored for it.** In "Great game, but it runs terribly", performance is a complaint even though the review is positive.
+- **Real effect:** 27.3% of topic tags got a different label than their review, and 397 Recommended reviews contained a complaint that a review-level label would have hidden.
+
+**How accurate is the topic breakdown?**
+I can't give an accuracy number, because there's no answer key for topics. What I can say honestly:
+- **Coverage:** 27.2% of reviews get a tag, 62.2% of those with 20+ words. Most untagged ones are very short.
+- **A spot check:** I read 50 random tags; 38 were clearly right, 7 wrong, 5 debatable. That's my judgement on a small sample.
+- **Known failures:**
+  - Hollow Knight's insect "bugs".
+  - "Game breaking bug" scored as praise, because the classifier learned "bug" as a positive word from that same game.
+  - Rating text like "2/10".
+
+The next step would be a few hundred hand-labeled excerpts to measure it properly.
+
+**Why store topic tags instead of computing them on each request?**
+- **It's cheap to read:** the endpoint answers in 21–56 ms with a SQL query, which matters on a 0.1-CPU server.
+- **The cost:** changing a keyword means re-running the scoring script with `--rescore`. That took 6.6 s for all 17,552 reviews.

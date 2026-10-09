@@ -4,13 +4,23 @@ from datetime import datetime, timezone
 
 
 def add_review(conn, review_id, app_id=620, voted_up=True, label="positive", compound=0.5,
-               created_at=datetime(2026, 8, 15, tzinfo=timezone.utc), text="text"):
-    """Insert a review with a known sentiment (bypassing VADER) so expected numbers are exact."""
+               created_at=datetime(2026, 8, 15, tzinfo=timezone.utc), text="text", helpful_votes=0):
+    """Insert a review with a known sentiment (bypassing the model) so expected numbers are exact."""
     conn.execute(
         """INSERT INTO reviews (recommendation_id, app_id, review_text, voted_up, created_at,
-                                sentiment_label, sentiment_compound)
-           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-        (review_id, app_id, text, voted_up, created_at, label, compound),
+                                sentiment_label, sentiment_compound, helpful_votes)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+        (review_id, app_id, text, voted_up, created_at, label, compound, helpful_votes),
+    )
+    conn.commit()
+
+
+def add_topic(conn, review_id, topic, label="positive", score=0.5, excerpt="excerpt"):
+    """Tag a stored review with a topic and that topic's sentiment (bypassing the keywords and model)."""
+    conn.execute(
+        """INSERT INTO review_topics (recommendation_id, topic, excerpt, sentiment_score, sentiment_label)
+           VALUES (%s, %s, %s, %s, %s)""",
+        (review_id, topic, excerpt, score, label),
     )
     conn.commit()
 

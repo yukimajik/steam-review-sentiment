@@ -36,9 +36,9 @@ def test_database_url() -> str:
 
 @pytest.fixture
 def conn(test_database_url):
-    """A connection to the test database, starting each test with an empty reviews table."""
+    """A connection to the test database, starting each test with empty tables."""
     with psycopg.connect(test_database_url) as conn:
-        conn.execute("TRUNCATE reviews")
+        conn.execute("TRUNCATE reviews, review_topics")
         conn.commit()
         yield conn
 

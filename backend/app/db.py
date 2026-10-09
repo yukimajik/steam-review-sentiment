@@ -1,4 +1,4 @@
-"""Saving and scoring reviews in PostgreSQL. Shared by the API and the command-line scripts."""
+"""Saving, scoring and topic-tagging reviews in PostgreSQL. Shared by the API and the command-line scripts."""
 
 import os
 
@@ -6,6 +6,7 @@ import psycopg
 from dotenv import load_dotenv
 
 from app.sentiment import score_many
+from app.topics import tag_many
 
 SCORE_BATCH_SIZE = 1000
 
@@ -36,6 +37,14 @@ UPDATE_SQL = """
     WHERE recommendation_id = %s
 """
 
+# Rescoring replaces a review's topic tags, so remove the old ones first.
+DELETE_TOPICS_SQL = "DELETE FROM review_topics WHERE recommendation_id = ANY(%s)"
+
+INSERT_TOPIC_SQL = """
+    INSERT INTO review_topics (recommendation_id, topic, excerpt, sentiment_score, sentiment_label)
+    VALUES (%s, %s, %s, %s, %s)
+"""
+
 
 def database_url() -> str:
     """DATABASE_URL from the environment, or from the .env file in the project root."""
@@ -57,8 +66,9 @@ def save_reviews(conn: psycopg.Connection, rows: list[tuple]) -> int:
 
 def score_reviews(conn: psycopg.Connection, app_id: int | None = None, rescore: bool = False) -> int:
     """
-    Give every unscored review (for one game, or all games) a sentiment score and label.
-    With rescore=True, recompute reviews that already have one. Returns how many were scored.
+    Give every unscored review (for one game, or all games) a sentiment score and label, and
+    tag the topics it mentions. With rescore=True, redo reviews that were already scored.
+    Returns how many were scored.
     """
     last_id = 0
     total = 0
@@ -70,8 +80,16 @@ def score_reviews(conn: psycopg.Connection, app_id: int | None = None, rescore: 
             batch = cur.fetchall()
             if not batch:
                 return total
-            scored = score_many([text for _, text in batch])  # one batch call is much faster than one per review
-            cur.executemany(UPDATE_SQL, [(s, label, review_id) for (s, label), (review_id, _) in zip(scored, batch)])
+            ids = [review_id for review_id, _ in batch]
+            texts = [text for _, text in batch]
+            scored = score_many(texts)  # one batch call is much faster than one per review
+            cur.executemany(UPDATE_SQL, [(s, label, review_id) for (s, label), review_id in zip(scored, ids)])
+            cur.execute(DELETE_TOPICS_SQL, (ids,))
+            cur.executemany(INSERT_TOPIC_SQL, [
+                (review_id, topic, excerpt, s, label)
+                for review_id, topics in zip(ids, tag_many(texts))
+                for topic, (excerpt, s, label) in topics.items()
+            ])
         conn.commit()  # commit each batch so progress is kept if scoring stops midway
         last_id = batch[-1][0]
         total += len(batch)

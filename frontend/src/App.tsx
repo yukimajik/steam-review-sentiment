@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
-import { ApiError, fetchFromSteam, getSummary, getTrend, isAbort, type SearchResult, type Summary, type Trend } from './api'
+import {
+  ApiError, fetchFromSteam, getSummary, getTopics, getTrend, isAbort, type SearchResult, type Summary, type Topics, type Trend,
+} from './api'
 import { ReviewList } from './components/ReviewList'
 import { GameSearch } from './components/GameSearch'
 import { SentimentPie } from './components/SentimentPie'
 import { SummaryCards, SummaryCardsSkeleton } from './components/SummaryCards'
+import { TopicBreakdown } from './components/TopicBreakdown'
 import { ChartSkeleton, TrendChart } from './components/TrendChart'
 import { formatCount } from './format'
 
@@ -13,7 +16,7 @@ const SLOW_LOAD_MS = 5000 // after this long, explain that the server may be wak
 // The outcome of loading one game. `key` says which request it answers, so a result
 // for an older request is never shown as the current one.
 type Loaded = { key: string } & (
-  | { status: 'ready'; summary: Summary; trend: Trend }
+  | { status: 'ready'; summary: Summary; trend: Trend; topics: Topics }
   | { status: 'not-stored' } // the API has no reviews for this game yet
   | { status: 'error'; message: string }
 )
@@ -34,8 +37,8 @@ export default function App() {
     if (appId === null) return
     const key = `${appId}-${reloadKey}`
     const controller = new AbortController() // a newer search cancels this one
-    Promise.all([getSummary(appId, controller.signal), getTrend(appId, controller.signal)])
-      .then(([summary, trend]) => setLoaded({ key, status: 'ready', summary, trend }))
+    Promise.all([getSummary(appId, controller.signal), getTrend(appId, controller.signal), getTopics(appId, controller.signal)])
+      .then(([summary, trend, topics]) => setLoaded({ key, status: 'ready', summary, trend, topics }))
       .catch((error) => {
         if (isAbort(error)) return
         if (error instanceof ApiError && error.status === 404) {
@@ -118,6 +121,7 @@ export default function App() {
                   <ChartSkeleton title="Sentiment breakdown" />
                   <ChartSkeleton title="Average sentiment by month" />
                 </div>
+                <ChartSkeleton title="What players talk about" />
               </div>
             )}
 
@@ -156,6 +160,8 @@ export default function App() {
                   <SentimentPie summary={dashboard.summary} />
                   <TrendChart months={dashboard.trend.months} />
                 </div>
+                {/* Its key must differ from ReviewList's: siblings can't share one */}
+                <TopicBreakdown key={`topics-${appId}`} data={dashboard.topics} />
                 <ReviewList key={appId} appId={appId} />
               </div>
             )}
@@ -166,7 +172,9 @@ export default function App() {
       <footer className="page-footer">
         Sentiment labels come from a classifier (TF-IDF + logistic regression) trained on Steam reviews to predict whether
         the player recommends the game; “neutral” means it isn’t confident either way. “Model agreement” is how often its
-        label matches the player’s own thumbs up or down, with neutral counting as a miss.
+        label matches the player’s own thumbs up or down, with neutral counting as a miss. Topics are found with keyword
+        lists, so reviews that describe a topic in other words are missed; each topic’s praise or complaint comes from
+        the model scoring only the sentences about it.
       </footer>
     </div>
   )

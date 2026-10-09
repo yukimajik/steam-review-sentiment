@@ -25,6 +25,32 @@ export interface Trend {
   months: TrendMonth[]
 }
 
+export type Topic = 'performance' | 'bugs' | 'price' | 'story' | 'gameplay' | 'graphics' | 'multiplayer' | 'content'
+
+export interface TopicExample {
+  recommendation_id: number
+  excerpt: string // the part of the review that mentions the topic
+  sentiment_score: number // the model's score for the excerpt alone, -1 to +1
+  voted_up: boolean
+  helpful_votes: number
+}
+
+export interface TopicSummary {
+  topic: Topic
+  mentions: number // reviews that mention the topic
+  positive: number // of those: praise / model unsure / complaints
+  neutral: number
+  negative: number
+  praise: TopicExample[] // up to 3, most helpful first
+  complaints: TopicExample[]
+}
+
+export interface Topics {
+  app_id: number
+  total_reviews: number // every scored review, including those that mention no topic
+  topics: TopicSummary[] // every topic, most mentioned first
+}
+
 export interface Review {
   recommendation_id: number
   review_text: string
@@ -113,6 +139,10 @@ export function getSummary(appId: number, signal?: AbortSignal) {
 
 export function getTrend(appId: number, signal?: AbortSignal) {
   return request<Trend>(`/games/${appId}/trend`, { signal })
+}
+
+export function getTopics(appId: number, signal?: AbortSignal) {
+  return request<Topics>(`/games/${appId}/topics`, { signal })
 }
 
 export function getReviews(appId: number, sentiment: Sentiment | null, page: number, pageSize: number, signal?: AbortSignal) {

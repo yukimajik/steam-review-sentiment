@@ -44,6 +44,10 @@ def test_scores_stay_between_minus_one_and_one():
         assert -1 <= s <= 1
 
 
+def test_scoring_no_texts_returns_nothing():
+    assert score_many([]) == []
+
+
 def test_batch_scoring_matches_one_at_a_time():
     texts = ["great", "", "Terrible. Broken and boring."]
     assert score_many(texts) == [score(t) for t in texts]

@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
-from app import db, search
+from app import db, search, topics
 from app.steam import SteamError, fetch_reviews, to_row
 
 MAX_FETCH = 5000  # the fetch request waits until done, so cap how long that can take
@@ -201,6 +201,93 @@ def game_trend(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_co
         raise no_reviews(app_id)
     months = [TrendMonth(month=month, avg_compound=round(avg, 3), review_count=count) for month, avg, count in rows]
     return Trend(app_id=app_id, months=months)
+
+
+# ---------- GET /games/{app_id}/topics ----------
+
+EXAMPLES_PER_SIDE = 3
+
+
+class TopicExample(BaseModel):
+    recommendation_id: int
+    excerpt: str            # the part of the review that mentions the topic
+    sentiment_score: float  # the model's score for the excerpt alone, -1 to +1
+    voted_up: bool
+    helpful_votes: int
+
+
+class TopicSummary(BaseModel):
+    topic: str     # e.g. "performance"; the full list is topics.TOPICS
+    mentions: int  # reviews that mention the topic
+    positive: int  # of those, how many the model reads as praise / isn't sure about / complaints
+    neutral: int
+    negative: int
+    praise: list[TopicExample]      # up to 3 positive excerpts, most helpful first
+    complaints: list[TopicExample]  # up to 3 negative ones
+
+
+class Topics(BaseModel):
+    app_id: int
+    total_reviews: int           # every scored review, including those that mention no topic
+    topics: list[TopicSummary]   # every topic, most mentioned first
+
+
+TOTAL_SCORED_SQL = "SELECT count(*) FROM reviews WHERE app_id = %s AND sentiment_label IS NOT NULL"
+
+TOPIC_COUNTS_SQL = """
+    SELECT t.topic,
+           count(*),
+           count(*) FILTER (WHERE t.sentiment_label = 'positive'),
+           count(*) FILTER (WHERE t.sentiment_label = 'neutral'),
+           count(*) FILTER (WHERE t.sentiment_label = 'negative')
+    FROM review_topics t JOIN reviews r USING (recommendation_id)
+    WHERE r.app_id = %s
+    GROUP BY t.topic
+"""
+
+# The top few praise and complaint excerpts for each topic: the ones most players marked
+# helpful, then the ones the model is most sure about.
+TOPIC_EXAMPLES_SQL = """
+    SELECT topic, sentiment_label, recommendation_id, excerpt, sentiment_score, voted_up, helpful_votes
+    FROM (
+        SELECT t.topic, t.sentiment_label, t.recommendation_id, t.excerpt, t.sentiment_score,
+               r.voted_up, r.helpful_votes,
+               row_number() OVER (
+                   PARTITION BY t.topic, t.sentiment_label
+                   ORDER BY r.helpful_votes DESC, abs(t.sentiment_score) DESC, t.recommendation_id
+               ) AS rank
+        FROM review_topics t JOIN reviews r USING (recommendation_id)
+        WHERE r.app_id = %(app_id)s AND t.sentiment_label <> 'neutral'
+    ) ranked
+    WHERE rank <= %(per_side)s
+    ORDER BY rank
+"""
+
+
+@app.get("/games/{app_id}/topics", response_model=Topics)
+def game_topics(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
+    """How many reviews mention each topic (performance, bugs, price/value, ...), how many of
+    those praise or complain about it, and example excerpts. Topics are found by keywords."""
+    total = conn.execute(TOTAL_SCORED_SQL, (app_id,)).fetchone()[0]
+    if total == 0:
+        raise no_reviews(app_id)
+    counts = {topic: rest for topic, *rest in conn.execute(TOPIC_COUNTS_SQL, (app_id,))}
+    examples: dict[tuple[str, str], list[TopicExample]] = {}
+    with conn.cursor(row_factory=dict_row) as cur:
+        for row in cur.execute(TOPIC_EXAMPLES_SQL, {"app_id": app_id, "per_side": EXAMPLES_PER_SIDE}):
+            key = (row.pop("topic"), row.pop("sentiment_label"))
+            examples.setdefault(key, []).append(TopicExample(**row))
+
+    summaries = []
+    for topic in topics.TOPICS:
+        mentions, positive, neutral, negative = counts.get(topic, (0, 0, 0, 0))
+        summaries.append(TopicSummary(
+            topic=topic, mentions=mentions, positive=positive, neutral=neutral, negative=negative,
+            praise=examples.get((topic, "positive"), []),
+            complaints=examples.get((topic, "negative"), []),
+        ))
+    summaries.sort(key=lambda s: s.mentions, reverse=True)  # a stable sort, so ties keep the topic order
+    return Topics(app_id=app_id, total_reviews=total, topics=summaries)
 
 
 # ---------- GET /games/{app_id}/reviews ----------

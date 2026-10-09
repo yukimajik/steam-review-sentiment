@@ -451,6 +451,75 @@ main {
   color: var(--text-primary);
 }
 
+/* ---------- Topics ---------- */
+.topics {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.topic-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 16px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.topic-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.topics-chart {
+  height: 320px;
+}
+
+.topic-examples {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+}
+
+.topic-examples-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.topic-examples-count {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.excerpts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.excerpt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 12px;
+  border-left: 3px solid var(--grid);
+  font-size: 0.9375rem;
+}
+
+.excerpt .link-button {
+  align-self: flex-start;
+}
+
 /* ---------- Reviews ---------- */
 .reviews {
   display: flex;
@@ -702,6 +771,10 @@ main {
 
   .card {
     padding: 20px;
+  }
+
+  .topic-examples {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
