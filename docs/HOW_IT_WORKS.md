@@ -10,7 +10,8 @@ A learning guide to this project: what each piece does, how data moves through i
 - Then: search by game name instead of app ID.
 - Then: an experiment comparing VADER with a transformer and a trained classifier.
 - Then: the app switched from VADER to the trained classifier (TF-IDF + logistic regression).
-- Then: a topic breakdown. Each review is tagged with the topics it mentions (performance, bugs, price/value, story, gameplay, graphics, multiplayer/servers, content/length) using keyword lists, and each topic gets its own sentiment.
+- Then: sentiment around game updates. Updates come from each game's official Steam news, and the average sentiment in the 2 weeks before and after each one is compared. The timeline switched from months to weeks and marks the updates.
+- Before that: a topic breakdown. Each review is tagged with the topics it mentions (performance, bugs, price/value, story, gameplay, graphics, multiplayer/servers, content/length) using keyword lists, and each topic gets its own sentiment.
 
 ---
 
@@ -21,8 +22,9 @@ A learning guide to this project: what each piece does, how data moves through i
 | `docker-compose.yml` | Starts two containers: `db` (PostgreSQL 17) and `api` (the FastAPI app). The API waits until the database is healthy. |
 | `.env.example` | Template for `.env`, which holds the database password and settings. `.env` is git-ignored so secrets never get committed. |
 | `db/init.sql` | Creates the `reviews` table, adds the sentiment columns, and creates the `review_topics` table. Runs automatically on a brand-new database and is safe to re-run on an existing one. |
-| `backend/app/main.py` | The API: six endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
-| `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors) and searches the store by name. Both share one retry function that respects rate limits. |
+| `backend/app/main.py` | The API: eight endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
+| `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors, or one day at a time), reads a game's official news, and searches the store by name. All share one retry function that respects rate limits. |
+| `backend/app/updates.py` | Game updates: which news posts count as updates, grouping updates less than 2 weeks apart, fetching the reviews around each one, and the before/after numbers. |
 | `backend/app/search.py` | Game search on top of Steam's store search: a one-hour cache and the typo fallback. |
 | `backend/app/sentiment.py` | Cleans review text and scores it with the trained classifier, then turns the score into positive / neutral / negative. |
 | `backend/app/topics.py` | The topic keyword lists. Cuts a review into parts (sentences, list items, and at "but"/"however"), finds the parts that mention each topic, and scores just those parts with the classifier. |
@@ -35,14 +37,14 @@ A learning guide to this project: what each piece does, how data moves through i
 | `backend/experiments/compare_models.py` | The model comparison experiment: VADER vs. a pretrained transformer vs. TF-IDF + logistic regression, on games held out from training. Writes `results.md`. |
 | `backend/experiments/requirements.txt` | The experiment's extra packages (VADER, PyTorch, transformers). The app and its Docker image don't use them. |
 | `backend/experiments/results.md` | The latest comparison report, written by the script. |
-| `backend/tests/` | 95 pytest tests: `test_api.py` (endpoints), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), plus shared setup in `conftest.py` and `helpers.py`. |
+| `backend/tests/` | 140 pytest tests: `test_api.py` (endpoints), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
 | `frontend/src/App.tsx` | The dashboard page: the picked game (name, cover, app ID), loading its data, the fetch button, and which state to show (loading, not stored, error, ready). |
 | `frontend/src/api.ts` | Calls the API, mirrors its response shapes as TypeScript types, and turns failures into messages a person can act on. |
 | `frontend/src/format.ts` | Number, date and score formatting, sentiment colors and labels, topic names, and stripping Steam's formatting tags for display. |
-| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `SummaryCards`, `SentimentPie`, `TrendChart`, `TopicBreakdown` (the topic chart and example excerpts), `ReviewList`: one file per part of the page. |
+| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `SummaryCards`, `SentimentPie`, `TrendChart`, `TopicBreakdown` (the topic chart and example excerpts), `UpdateShifts` (before/after numbers around updates, and the button that fetches their reviews), `ReviewList`: one file per part of the page. |
 | `frontend/src/index.css` | All styling: color tokens, layout, and the phone/tablet/desktop breakpoints. |
 | `frontend/package.json` | Frontend dependencies (React, Recharts, Vite, TypeScript, Oxlint) and scripts (`dev`, `build`, `lint`). |
 
@@ -57,6 +59,11 @@ A learning guide to this project: what each piece does, how data moves through i
 | `playtime_at_review_minutes`, `helpful_votes`, `created_at` | Extra details from Steam |
 | `sentiment_compound` | The model's score, from −1 (surely Not recommended) to +1 (surely Recommended): 2 × P(Recommended) − 1. Named after VADER's "compound" score, which it held originally. |
 | `sentiment_label` | `positive`, `neutral` or `negative`, derived from the score |
+
+### The `game_updates` and `update_review_days` tables
+
+- **`game_updates`**: one row per news post that counts as an update. Columns: Steam's post ID (`gid`), `app_id`, `title`, `url`, and `posted_at`. It's replaced each time the news is read, so a post that no longer counts disappears.
+- **`update_review_days`**: `(app_id, day)` for every day whose reviews were fetched for the comparison. A day shared by two updates is fetched once, and an interrupted fetch resumes at the first missing day.
 
 ### The `review_topics` table
 
@@ -90,10 +97,20 @@ One row per review per topic it mentions. A review that mentions nothing has no 
 ### Reading: summary, trend, reviews
 
 - **Summary** runs one SQL query that counts everything at once (`count(*) FILTER (WHERE ...)`): totals per label, Recommended votes, and agreements. Python turns the counts into percentages.
-- **Trend** groups reviews by the month they were posted (in UTC) and averages the score.
+- **Trend** groups reviews by the week they were posted (Monday to Sunday, UTC) and averages the score. Weeks with no reviews are simply missing, and the chart shows them as gaps.
 - **Reviews** runs two queries: one counts matching reviews (for page numbers), one fetches the requested page, newest first.
 - **Topics** runs three queries: the number of scored reviews; praise, neutral and complaint counts per topic; and the top 3 praise and complaint excerpts per topic, picked with a window function (`row_number() OVER (PARTITION BY topic, label ...)`). Python fills in zeros for topics nobody mentions and sorts by mentions.
 - All four only look at **scored** reviews and return `404` if the game has none.
+
+### Comparing updates: `POST /games/{id}/updates/fetch`, then `GET /games/{id}/updates`
+
+1. **News.** The API reads the game's last 100 official announcements from `ISteamNews/GetNewsForApp` (official posts only, no press articles) and keeps the ones that count as updates (see design choices). They replace the game's rows in `game_updates`.
+2. **Grouping.** Update posts less than 14 days after a group's first post join that group, so a hotfix two days after a patch doesn't get its own, mostly overlapping, comparison. Only groups from the last 12 months count.
+3. **Which update next.** Groups whose 14 days "after" aren't over yet are "too recent". Of the rest, only the 10 most recent are used. The newest one still missing reviews is fetched by this request.
+4. **Reviews.** For each of the 28 days around it (14 before, 14 after; the update's own day is skipped because it mixes both), one request asks Steam's review API for that day's reviews, up to 100. Days already fetched are skipped. Each day's reviews are saved like any others and the day is recorded, with a 1-second pause between requests. Then the new reviews are scored and topic-tagged.
+5. **Response.** `{"fetched_day": "2026-09-01", "new_reviews": 528, "remaining": 1}`. The page calls again until `remaining` is 0. In real runs one update took 33–36 s, or 18.9 s when half its days were already fetched for a neighboring update.
+6. **Rate limits.** If Steam keeps answering 429 after the usual retries, the API answers `429` with `Retry-After: 60`; the days already fetched are kept. The page waits a minute and carries on.
+7. **Comparing.** `GET /updates` reads only the database. For each group it counts reviews, averages the score, and works out the share of Recommended votes in the 14 days before and after, then ranks the 3 biggest rises and drops among updates with at least 30 reviews on each side.
 
 ### The command-line scripts
 
@@ -102,12 +119,13 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 ### In the browser
 
 1. You type part of a game's name. `GameSearch` waits until you pause typing (300 ms) and calls `/search` (described in the next section). It shows up to 10 matches with covers. Picking one hands its app ID, name and cover to `App`.
-2. `App` calls `/summary`, `/trend` and `/topics` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
+2. `App` calls `/summary`, `/trend`, `/topics` and `/updates` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
 3. **404** means the game isn't stored. The page offers "Fetch reviews from Steam", which calls `POST /fetch?max_reviews=1000`. In a real run that took 12.8 seconds, then the dashboard loaded.
 4. **Any other error** shows a message saying what to do (start the API, start the database, try again later) with a "Try again" button.
-5. **Success** draws the summary cards, the pie, the line chart and the topic section. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment.
-6. **The topic section** starts on the most-mentioned topic. Clicking a bar or a topic button shows that topic's praise and complaint excerpts.
-7. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
+5. **Success** draws the summary cards, the pie, the weekly line chart with update markers, the update section and the topic section. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment.
+6. **The update section** offers "Find updates", or "Fetch reviews around N updates" with an estimated time. While it runs it shows "update 2 of 5", pauses for a minute if Steam rate limits, and reloads the dashboard when done. Picking another game stops it.
+7. **The topic section** starts on the most-mentioned topic. Clicking a bar or a topic button shows that topic's praise and complaint excerpts.
+8. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
 
 ### Searching for a game: `GET /search?q=cyberpnk`
 
@@ -167,6 +185,26 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Tags stored in a table, computed while scoring** | The topic endpoint is then a cheap SQL query (21–56 ms in real runs), which matters on a 0.1-CPU server. Changing a keyword means re-running `score_sentiment.py --rescore` | Computing topics on every request: always uses the latest keywords and needs no table, but re-reads and re-scores every review on every page load |
 | **A new `sentiment_score` column instead of reusing the name `sentiment_compound`** | "compound" is a VADER term that no longer fits; the reviews table keeps its old name only to avoid breaking the API | Copying the old name for consistency |
 
+### Updates
+
+| Choice | Why | Alternatives |
+|---|---|---|
+| **Updates from `ISteamNews/GetNewsForApp`, official posts only** | Free and needs no key. The feed also carries press articles (e.g. PlayGround.ru about the Elden Ring film), so it's filtered to the game's own announcements | Steam's store "events" page (labels post types, but undocumented and untested here); a hand-made list of patch dates |
+| **An update is: Steam's `patchnotes` tag, *or* a title with patch/hotfix/changelog/release notes/a version number, *or* "update"/"season" with "now live"/"out now"; minus test-server, preview and announcement posts** | Checked against every stored game. The tag alone missed whole games (Black Myth: Wukong tags none of its "1.0.21.23831 Patch Notes" posts). "update" alone caught dev blogs ("Blog Update #50"). "Introducing Update Ver. 1.041 — Available Wednesday" was posted 8 days before that update | The tag only; every official post (includes sales, merchandise, Steam Awards) |
+| **Fetch reviews around each update, one day at a time, up to 100 per day** | The newest 1,000 reviews span only 7–37 days for most games, so only 4 updates in all 16 games had both windows covered. Steam's review API accepts a date range (used by the store's own filter, not documented); asking day by day keeps every day represented, instead of only the last days of each window | Only stored reviews (almost nothing to compare); all reviews in each window (up to ~4,000 per update for big games); the newest N of each window (biased toward its end) |
+| **Check the date range was honoured** | It's undocumented, so it could change. If Steam sends reviews and none are from the requested day, that's an error, not data | Trust it |
+| **The update's own day is left out** | It mixes reviews from before and after the release | Split that day at the post's exact time (the 100-per-day sample doesn't spread evenly across hours) |
+| **Updates less than 14 days after a group's start are merged into it** | Otherwise a hotfix's "before" would be mostly the main patch's "after". Updates 14–28 days apart still overlap partly; that's unavoidable with 2-week windows on games that update often | Every post separately; requiring 28-day gaps (drops many updates) |
+| **Last 12 months, at most the 10 most recent, only once the 2 weeks after are over** | Each update costs 28 requests (about 35 s). A half-finished "after" window would compare 14 days with a few | All updates (minutes per game, and rate limits) |
+| **Only updates with 30+ reviews on each side are ranked** | Averages of a handful of reviews swing wildly, and a "biggest shift" list would otherwise be dominated by them | No minimum; a statistical test (more honest about noise, but more to explain; not asked for) |
+| **Show the share of Recommended votes next to the model's score** | The votes are the players' own answer, from the same reviews, so they're a free check on the model. For PAYDAY 3 the two moved in opposite directions for 4 of 10 updates | Model score only |
+| **Wording: "before / after", never "impact" or "caused"** | Sales, events, new seasons and new players arrive around updates, so the numbers can't separate an update's effect from everything else | A causal design (e.g. comparing with similar games that didn't update), which is a much bigger project |
+| **One update per request; the page loops and shows "update 2 of 5"** | Each request stays well under a minute, and progress is visible | One request for everything (several minutes of a silent spinner); a background job queue (more moving parts) |
+| **When Steam rate limits: answer 429 with `Retry-After`, the page waits a minute and continues** | Happened for real after about 125 requests in 2.5 minutes. Steam sent no `Retry-After`, and it lifted within 91 s of probing. Fetched days are kept | Slowing every request down (we don't know Steam's limit, and guessing would make every fetch slower) |
+| **Fetched days recorded in their own table** | An interrupted fetch resumes, and days shared by neighboring updates aren't fetched twice | Recording whole updates as done (breaks when groups change as new posts arrive) |
+| **The extra reviews go into the normal `reviews` table** | They're scored and topic-tagged like the rest. The trade-off: the summary, pie, topics and review list now include them, so they describe all stored reviews, not just the newest | A separate table used only for the comparison |
+| **Scores shown with 3 decimals here** | Shifts are often small; with 2 decimals, "+0.52 → +0.54 (+0.01)" looked wrong | 2 decimals as elsewhere |
+
 ### API
 
 | Choice | Why | Alternatives |
@@ -176,7 +214,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **One connection per request** | Simple and isolated | A connection pool (`psycopg_pool`): faster under heavy load |
 | **Fetch waits until done, max 5,000** | Simplest design: one request, one answer. The cap keeps the wait to about a minute | Background job + "status" endpoint: no waiting, but more moving parts. The right move for big fetches or many users |
 | **Agreement counts neutral as a miss, plus a baseline** | Players can't vote neutral, so neutral is never "right". The baseline shows whether agreement beats a model that does nothing | Exclude neutral reviews (flatters the score: 86.2% vs 68.3% on all data) |
-| **Trend months in UTC, with review counts** | Results don't depend on the server's time zone; counts show which months to trust | Server time zone; averages alone |
+| **Trend weeks in UTC, with review counts** | Results don't depend on the server's time zone; counts show which weeks to trust. Weeks replaced months so a 2-week before/after can be seen on the chart | Months (too coarse to see an update's effect window); days (too noisy with ~10 reviews a day for smaller games) |
 | **Page-number pagination, ties broken by ID** | Easy for a table with page numbers; the ID tie-breaker stops reviews posted in the same second from appearing on two pages | Keyset/cursor pagination: faster on deep pages and stable while data changes, but no "jump to page 7" |
 | **Topics: all 8 always returned, most mentioned first, with counts rather than percentages** | The frontend can show "nobody mentions multiplayer" without guessing which topics exist, and computes shares from the counts and the total | Only topics with mentions; percentages from the API |
 | **Topic examples: up to 3 per side, most helpful votes first, then most confident; neutral never shown** | Helpful votes are other players vouching for a review; confidence breaks ties among the many reviews with no votes yet | Random examples; most recent; longest |
@@ -232,7 +270,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Topic chart: horizontal bars, complaints left in red and praise right in blue, as a share of all reviews** | Answers "what do players like and complain about most" in one view. Both sides use the same scale so they compare fairly, and topics are sorted by how often they come up | Stacked 100% bars per topic (hide how often a topic comes up); two separate charts (harder to compare a topic's two sides) |
 | **Pick a topic by clicking its bar or a topic button** | Bars are quick with a mouse; the buttons also work with a keyboard and screen readers, and show which topic is selected. The selected topic's bars stay solid and the rest fade | A dropdown; a separate topic filter on the review list (all matching reviews with paging, but another filter to manage) |
 | **Topics loaded with the summary and trend in one `Promise.all`** | One loading state for the whole dashboard; the data doesn't change while you look at it | Loading inside the component like `ReviewList` (its own spinner and error, but more code) |
-| **One 640 kB bundle (188 kB gzipped), mostly Recharts** | Fine for a local dashboard | Load the charts separately with `import()` to make first paint faster |
+| **One 648 kB bundle (190 kB gzipped), mostly Recharts** | Fine for a local dashboard | Load the charts separately with `import()` to make first paint faster |
 
 ---
 
@@ -316,6 +354,12 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 **Precision and recall, for tags.** *Precision*: of the reviews tagged "bugs", how many really talk about bugs. *Recall*: of the reviews that talk about bugs, how many got tagged. Keywords tend to have good precision and poor recall: they're usually right when they fire, but miss everything said in other words.
 
 **Aspect-based sentiment.** Instead of one feeling per review, one feeling per thing the review talks about (its *aspects*: performance, story, ...). A review can love the story and hate the servers.
+
+**Before/after is not cause and effect.** Two numbers measured before and after an event differ for many reasons: a sale bringing new players, a seasonal event, a review bomb, or plain chance. Showing a cause needs a comparison that holds everything else equal, such as similar games that didn't update at the same time. That's why the dashboard only reports the numbers.
+
+**Sampling.** On busy days only the newest 100 reviews are fetched, so that day is represented by a sample from its later hours. It's a sample, not the whole day, which matters for games with more than 100 English reviews a day.
+
+**Rate limits, seen from our side.** When Steam answers `429 Too Many Requests` without saying how long to wait, the polite thing is to stop, keep what you have, and try again later, not to keep hammering it.
 
 **Skeletons vs. fading.** Gray placeholder shapes on the first load tell you what's coming. On later loads (new page, new filter), the old content stays and fades, because swapping it for placeholders would make the page jump.
 
@@ -424,10 +468,43 @@ Players mostly praise gameplay, story and graphics, and mostly complain about bu
 - **Memory:** the API used 119.1 MiB after scoring with the model loaded, the same as before topics (120.3 MiB).
 - **Speed:** the topic endpoint answered in 21–56 ms. Re-scoring and topic-tagging all 17,552 reviews from the command line took 6.6 s.
 
+### Sentiment around updates
+
+**Why fetching was needed.** For most games the newest 1,000 reviews covered only 7–37 days. Of all updates found, only 4 across 2 games had stored reviews covering the 2 weeks on both sides.
+
+**The update rule on real news, last 12 months.** After tightening, it finds:
+- Patch posts for Black Myth: Wukong, Hollow Knight, Portal 2, Starfield, Baldur's Gate 3 and Elden Ring.
+- Changelogs for PAYDAY 3 and Cities: Skylines II.
+- Version posts for Dead by Daylight and Monster Hunter Wilds.
+- Season launches for Overwatch.
+
+Known misses: Rust's monthly updates, whose titles are single words like "LIVESTOCK", and posts with no update wording at all.
+
+**Black Myth: Wukong**, 2 updates:
+
+| Update | Reviews before / after | Average score before → after | Recommended before → after |
+|---|---|---|---|
+| Jan 14, 2026 | 294 / 234 | +0.470 → +0.491 (+0.021) | 89.1% → 90.2% |
+| Oct 16, 2025 | 292 / 311 | +0.523 → +0.538 (+0.015) | 91.1% → 92.9% |
+
+**PAYDAY 3**, 10 updates.
+- **Biggest rises:** Update 3.9 (+0.175, Recommended 74.7% → 87.7%), 3.5 (+0.124) and 3.2 (+0.119).
+- **Biggest drops:** Update 3.4 (−0.165), 2.5 (−0.081) and 3.3 (−0.044).
+- **The score and the votes disagree for 4 of the 10 updates.** After Update 3.4 the average score fell by 0.165 while Recommended rose from 60.4% to 66.2%, on 48 and 68 reviews. Small samples and a vote-predicting model make these numbers noisy, which is one more reason not to read cause into them.
+
+**Overwatch** (3 of its 5 updates fetched): shifts of +0.007, −0.002 and −0.060, on about 1,300–1,400 reviews per side.
+- **68 of its 84 fetched days hit the 100-review cap,** so its windows are samples.
+- PAYDAY 3 (at most 32 reviews a day) and Black Myth: Wukong (at most 40) never hit it.
+
+**Timing.**
+- One update took 33–36 s, or 18.9 s when half its days were already fetched.
+- Reading the news alone took 0.1 s.
+- Steam rate limited us once, after about 125 requests in 2.5 minutes. It lifted within 91 s of probing.
+
 ## 6. Interview questions
 
 **Walk me through the architecture.**
-A FastAPI service and PostgreSQL, run together with Docker Compose. `POST /games/{id}/fetch` pulls reviews from Steam's API page by page, saves them without duplicates, labels each one with a TF-IDF + logistic regression classifier trained on Steam reviews, and tags the topics it mentions. Four `GET` endpoints serve a summary, a monthly trend, a topic breakdown, and filtered, paginated reviews to a React frontend. The fetching and scoring logic lives in one shared package that both the API and the command-line scripts use.
+A FastAPI service and PostgreSQL, run together with Docker Compose. `POST /games/{id}/fetch` pulls reviews from Steam's API page by page, saves them without duplicates, labels each one with a TF-IDF + logistic regression classifier trained on Steam reviews, and tags the topics it mentions. `GET` endpoints serve a summary, a weekly trend, a topic breakdown, before/after numbers around game updates, and filtered, paginated reviews to a React frontend. A second `POST` reads a game's Steam news for updates and fetches the reviews around them. The fetching and scoring logic lives in one shared package that both the API and the command-line scripts use.
 
 **What happens if you fetch the same game twice?**
 Nothing bad. Each review has Steam's unique ID as the primary key, and inserts use `ON CONFLICT DO NOTHING`, so known reviews are skipped. The response's `new` count shows how many were actually added. A test covers this: the second fetch returns `new: 0`.
@@ -479,8 +556,8 @@ It's a browser rule. A page served from `localhost:5173` (the React dev server) 
 **How does the API container find the database?**
 Compose puts both containers on a private network where each service's name is its hostname, so the API connects to `db:5432`. `depends_on` with a health check makes the API wait until PostgreSQL actually accepts connections, not just until its container starts.
 
-**Why does the trend only cover a few months?**
-Each fetch starts from the newest review, and 2,000 reviews only reach back 3–4 months for these games. A longer trend needs a bigger fetch. Even better would be remembering the cursor where the last fetch stopped, so each fetch continues further back.
+**Why does the trend only cover a few weeks for some games?**
+Each fetch starts from the newest review, and 1,000 reviews reach back only 7–37 days for most of these games. Fetching the reviews around updates adds older weeks, with gaps in between. A continuous longer trend needs a bigger fetch, or remembering the cursor where the last fetch stopped so each fetch continues further back.
 
 **Why didn't you download Steam's full list of games?**
 I tested both options with real calls before choosing.
@@ -575,3 +652,33 @@ The next step would be a few hundred hand-labeled excerpts to measure it properl
 **Why store topic tags instead of computing them on each request?**
 - **It's cheap to read:** the endpoint answers in 21–56 ms with a SQL query, which matters on a 0.1-CPU server.
 - **The cost:** changing a keyword means re-running the scoring script with `--rescore`. That took 6.6 s for all 17,552 reviews.
+
+**How does the update comparison work?**
+1. **Find updates.** Read the game's official Steam news and decide which posts are updates, using Steam's patch-notes tag or the title.
+2. **Group them.** Updates less than 2 weeks apart are merged into one.
+3. **Fetch reviews.** For each of the 10 most recent finished updates, fetch the reviews from the 14 days before and the 14 days after, one day at a time, up to 100 per day.
+4. **Compare.** Compare the average model score, the share of Recommended votes, and the review counts, then rank the biggest rises and drops among updates with at least 30 reviews on each side.
+
+**How do you avoid claiming an update caused a change?**
+- **Wording:** the feature only reports before and after numbers. The page never says "impact" or "caused", and it explains that sales, events, seasons and new players arrive at the same time.
+- **The data backs that up:** for PAYDAY 3, the model's score and the players' votes moved in opposite directions for 4 of 10 updates.
+- **Showing a cause would need a comparison group,** for example similar games that didn't update in the same weeks.
+
+**How did you get reviews from months ago when Steam's API only goes newest-first?**
+- **The documented way doesn't scale:** reaching an update 6 months back means paging through every newer review first, which is thousands of requests for a busy game.
+- **I found that the review API accepts a date range,** the same one the Steam store's own review filter uses. I tested it on real games before relying on it: every returned review was from the requested day.
+- **Because it's undocumented,** the code checks each answer and treats "no reviews from that day" as an error rather than as data.
+
+**What went wrong when you tried it on real data?**
+Steam rate limited us. After about 125 requests in 2.5 minutes it answered 429 three times, with no `Retry-After` header.
+- **Measuring first:** I tried one request every 30 seconds, and it lifted within 91 s.
+- **The fix:** the API now answers `429 Retry-After: 60` and keeps the days already fetched. The page waits a minute and continues, up to 5 times.
+
+I didn't slow down every request, because I don't know Steam's actual limit and didn't want to guess.
+
+**What are the feature's limits?**
+- **Update detection is a title heuristic.** It misses Rust's one-word update titles.
+- **Busy days are sampled.** For Overwatch, 68 of 84 days had more than 100 reviews, so only 100 were fetched.
+- **Many shifts are small** compared to how much the numbers move from week to week.
+- **The extra reviews change the other charts,** since they become part of the game's stored reviews.
+- **Leaving the page stops the loop,** but a request already running on the server finishes and saves its reviews.

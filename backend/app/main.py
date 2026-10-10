@@ -7,7 +7,7 @@ Interactive docs: http://localhost:8000/docs
 """
 
 import os
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 import psycopg
@@ -18,10 +18,11 @@ from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
-from app import db, search, topics
-from app.steam import SteamError, fetch_reviews, to_row
+from app import db, search, steam, topics, updates
+from app.steam import SteamError, SteamRateLimited, fetch_reviews, to_row
 
 MAX_FETCH = 5000  # the fetch request waits until done, so cap how long that can take
+RATE_LIMIT_WAIT = 60  # seconds to suggest waiting when Steam is limiting our requests
 
 load_dotenv()  # reads the project's .env when running locally; in Docker, compose sets these
 DATABASE_URL = db.database_url()  # read once at startup, so a missing setting fails fast
@@ -54,6 +55,14 @@ def database_unavailable(request: Request, error: psycopg.OperationalError) -> J
 
 def no_reviews(app_id: int) -> HTTPException:
     return HTTPException(404, f"No reviews stored for app {app_id}. POST /games/{app_id}/fetch first.")
+
+
+HAS_REVIEWS_SQL = "SELECT EXISTS (SELECT 1 FROM reviews WHERE app_id = %s AND sentiment_label IS NOT NULL)"
+
+
+def require_reviews(conn: psycopg.Connection, app_id: int) -> None:
+    if not conn.execute(HAS_REVIEWS_SQL, (app_id,)).fetchone()[0]:
+        raise no_reviews(app_id)
 
 
 def pct(part: int, whole: int) -> float:
@@ -170,20 +179,20 @@ def game_summary(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_
 
 # ---------- GET /games/{app_id}/trend ----------
 
-class TrendMonth(BaseModel):
-    month: str           # e.g. "2026-08"
+class TrendWeek(BaseModel):
+    week: str            # the Monday the week starts on, e.g. "2026-09-21"
     avg_compound: float  # average model score: -1 (likely Not recommended) to +1 (likely Recommended)
-    review_count: int    # so a month with a handful of reviews isn't read like one with hundreds
+    review_count: int    # so a week with a handful of reviews isn't read like one with hundreds
 
 
 class Trend(BaseModel):
     app_id: int
-    months: list[TrendMonth]
+    weeks: list[TrendWeek]  # only weeks with reviews; there can be gaps
 
 
-# Months are in UTC so the result doesn't depend on the database server's time zone.
+# Weeks (Monday to Sunday) are in UTC so the result doesn't depend on the database server's time zone.
 TREND_SQL = """
-    SELECT to_char(date_trunc('month', created_at AT TIME ZONE 'UTC'), 'YYYY-MM'),
+    SELECT to_char(date_trunc('week', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD'),
            avg(sentiment_compound),
            count(*)
     FROM reviews
@@ -195,12 +204,12 @@ TREND_SQL = """
 
 @app.get("/games/{app_id}/trend", response_model=Trend)
 def game_trend(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
-    """Average sentiment for each month, by the date reviews were posted."""
+    """Average sentiment for each week, by the date reviews were posted."""
     rows = conn.execute(TREND_SQL, (app_id,)).fetchall()
     if not rows:
         raise no_reviews(app_id)
-    months = [TrendMonth(month=month, avg_compound=round(avg, 3), review_count=count) for month, avg, count in rows]
-    return Trend(app_id=app_id, months=months)
+    weeks = [TrendWeek(week=week, avg_compound=round(avg, 3), review_count=count) for week, avg, count in rows]
+    return Trend(app_id=app_id, weeks=weeks)
 
 
 # ---------- GET /games/{app_id}/topics ----------
@@ -290,6 +299,92 @@ def game_topics(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_c
     return Topics(app_id=app_id, total_reviews=total, topics=summaries)
 
 
+# ---------- GET /games/{app_id}/updates and POST /games/{app_id}/updates/fetch ----------
+
+class WindowStats(BaseModel):
+    reviews: int
+    avg_score: float | None        # average model score, -1 to +1
+    recommended_pct: float | None  # share of these reviewers who voted Recommended
+
+
+class UpdatePost(BaseModel):
+    gid: str  # Steam's ID for the news post
+    title: str
+    url: str
+    posted_at: datetime
+
+
+class UpdateComparison(BaseModel):
+    day: date                 # the update's day (UTC): compared are the 14 days before it and the 14 after
+    posts: list[UpdatePost]   # the update, plus further update posts less than 14 days after it
+    status: Literal["ready", "too_few_reviews", "needs_reviews", "too_recent"]
+    before: WindowStats | None
+    after: WindowStats | None
+    shift: float | None       # after minus before, in average score; a difference, not an effect
+
+
+class Updates(BaseModel):
+    app_id: int
+    window_days: int
+    min_reviews: int                       # per side, to be ranked among the biggest shifts
+    updates: list[UpdateComparison]        # last 12 months, newest first
+    biggest_rises: list[UpdateComparison]  # up to 3, largest first
+    biggest_drops: list[UpdateComparison]
+
+
+class UpdateFetchResult(BaseModel):
+    app_id: int
+    updates_found: int         # update posts in the game's official news from the last 12 months
+    fetched_day: date | None   # the update whose reviews this request fetched, if any
+    new_reviews: int
+    remaining: int             # updates still waiting for their reviews; call again for the next one
+
+
+@app.get("/games/{app_id}/updates", response_model=Updates)
+def game_updates(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
+    """Average sentiment in the 2 weeks before vs. the 2 weeks after each update from the last
+    12 months, and the biggest rises and drops. Before/after only: it doesn't show that an update
+    caused a change. Uses the updates and reviews already stored; POST .../updates/fetch gets them."""
+    require_reviews(conn, app_id)
+    results = updates.compare(conn, app_id, updates.today())
+    rises, drops = updates.biggest_shifts(results)
+    return Updates(app_id=app_id, window_days=updates.WINDOW_DAYS, min_reviews=updates.MIN_REVIEWS,
+                   updates=results, biggest_rises=rises, biggest_drops=drops)
+
+
+@app.post("/games/{app_id}/updates/fetch", response_model=UpdateFetchResult)
+def fetch_update_reviews(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
+    """Read the game's official Steam news for updates, then fetch the reviews around the newest
+    update that doesn't have them yet: up to 100 per day for the 14 days before and after (28
+    requests, about 30–40 seconds). Call again until `remaining` is 0."""
+    require_reviews(conn, app_id)
+    today = updates.today()
+    try:
+        posts = [post for post in steam.fetch_news(app_id) if updates.is_update(post)]
+    except SteamError as error:
+        raise HTTPException(502, f"Steam news error: {error}") from error
+    updates.save_posts(conn, app_id, posts)
+
+    waiting = [r for r in updates.compare(conn, app_id, today) if r["status"] == "needs_reviews"]
+    if not waiting:
+        return UpdateFetchResult(app_id=app_id, updates_found=len(updates.in_lookback(posts, today)),
+                                 fetched_day=None, new_reviews=0, remaining=0)
+    day = waiting[0]["day"]  # newest first
+    try:
+        new = updates.fetch_window_reviews(conn, app_id, updates.missing_days(conn, app_id, day))
+    except SteamRateLimited as error:
+        db.score_reviews(conn, app_id=app_id)  # days fetched before the failure are kept and scored
+        raise HTTPException(429, "Steam is limiting requests right now. The reviews fetched so far are saved; "
+                                 "try again in a minute to continue.",
+                            headers={"Retry-After": str(RATE_LIMIT_WAIT)}) from error
+    except SteamError as error:
+        db.score_reviews(conn, app_id=app_id)
+        raise HTTPException(502, f"Steam API error: {error}") from error
+    db.score_reviews(conn, app_id=app_id)
+    return UpdateFetchResult(app_id=app_id, updates_found=len(updates.in_lookback(posts, today)),
+                             fetched_day=day, new_reviews=new, remaining=len(waiting) - 1)
+
+
 # ---------- GET /games/{app_id}/reviews ----------
 
 class Review(BaseModel):
@@ -310,8 +405,6 @@ class ReviewPage(BaseModel):
     total: int  # reviews matching the filter, across all pages
     items: list[Review]
 
-
-HAS_REVIEWS_SQL = "SELECT EXISTS (SELECT 1 FROM reviews WHERE app_id = %s AND sentiment_label IS NOT NULL)"
 
 REVIEWS_FILTER = """
     FROM reviews
@@ -337,8 +430,7 @@ def game_reviews(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ):
     """Reviews for a game, newest first, optionally only one sentiment."""
-    if not conn.execute(HAS_REVIEWS_SQL, (app_id,)).fetchone()[0]:
-        raise no_reviews(app_id)
+    require_reviews(conn, app_id)
     params = {"app_id": app_id, "sentiment": sentiment, "limit": page_size, "offset": (page - 1) * page_size}
     total = conn.execute(COUNT_REVIEWS_SQL, params).fetchone()[0]
     with conn.cursor(row_factory=dict_row) as cur:

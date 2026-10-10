@@ -520,6 +520,66 @@ main {
   align-self: flex-start;
 }
 
+/* ---------- Updates ---------- */
+.updates {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.updates-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.shift-columns {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+}
+
+.shifts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shift {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+  border-left: 3px solid var(--grid);
+  font-size: 0.9375rem;
+}
+
+.shift-title {
+  overflow-wrap: anywhere;
+}
+
+.updates a {
+  color: var(--text-primary);
+}
+
+.shift-date {
+  font-weight: 600;
+}
+
+.shift-more {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+/* The all-updates table can be wider than a phone; it scrolls inside its box, not the page */
+.table-scroll {
+  overflow-x: auto;
+}
+
 /* ---------- Reviews ---------- */
 .reviews {
   display: flex;
@@ -773,7 +833,8 @@ main {
     padding: 20px;
   }
 
-  .topic-examples {
+  .topic-examples,
+  .shift-columns {
     grid-template-columns: 1fr 1fr;
   }
 }

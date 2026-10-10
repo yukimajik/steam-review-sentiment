@@ -11,11 +11,12 @@ A data pipeline and dashboard for analyzing player sentiment in Steam game revie
 - Retries network errors, rate limits (honoring `Retry-After`) and Steam server errors with exponential backoff, and commits page by page so progress survives interruptions
 - Labels each review positive / neutral / negative with a TF-IDF + logistic regression classifier trained on Steam reviews. It was chosen over VADER and a transformer by a held-out comparison; see [results](backend/experiments/results.md)
 - Topic breakdown: tags each review with the topics it mentions (performance, bugs, price/value, story, gameplay, graphics, multiplayer/servers, content/length) using keyword lists, and scores only the sentences about each topic, so "great game, but it runs terribly" counts as a performance complaint
+- Sentiment around updates: finds a game's patches in its official Steam news, fetches the reviews from the 2 weeks before and after each one, and shows the biggest rises and drops in average sentiment (with the players' Recommended share alongside). It reports before/after numbers only, not cause and effect
 - Measures how often the sentiment label agrees with the reviewer's own Recommended / Not recommended vote, compared against a majority-class baseline
-- REST API with endpoints for fetching, a summary, a monthly trend, a topic breakdown, and filtered, paginated reviews; CORS enabled for a local React frontend
+- REST API with endpoints for fetching, a summary, a weekly trend, a topic breakdown, sentiment around updates, and filtered, paginated reviews; CORS enabled for a local React frontend
 - pytest suite that runs against a separate test database, with Steam faked so tests never touch the network
 - Search by game name: a dropdown of matching games with cover images as you type, using Steam's store search through the backend (debounced, cached for an hour, forgiving of typos)
-- React dashboard: summary cards, sentiment pie chart, monthly trend line, a chart of what players praise and complain about by topic (with example excerpts), and a filterable, paginated review list, with loading and error states and a layout that works on phones
+- React dashboard: summary cards, sentiment pie chart, weekly trend line with game updates marked, the biggest before/after shifts around updates, a chart of what players praise and complain about by topic (with example excerpts), and a filterable, paginated review list, with loading and error states and a layout that works on phones
 
 ## Project structure
 
@@ -25,13 +26,13 @@ steam-review-sentiment/
 ├── .env.example                   # Template for database credentials and settings
 ├── pytest.ini                     # Test settings
 ├── db/
-│   └── init.sql                   # Creates the reviews and review_topics tables (safe to re-run)
+│   └── init.sql                   # Creates the reviews, topic and update tables (safe to re-run)
 ├── docs/
 │   └── HOW_IT_WORKS.md            # How everything works and why (learning doc)
 ├── frontend/                      # React dashboard (Vite + TypeScript)
 │   ├── src/App.tsx                # The page: search, states, layout
 │   ├── src/api.ts                 # API client and response types
-│   ├── src/components/            # Game search, summary cards, charts, topic breakdown, review list
+│   ├── src/components/            # Game search, summary cards, charts, updates, topic breakdown, review list
 │   └── src/index.css              # Styles and responsive layout
 └── backend/
     ├── Dockerfile                 # Builds the API image
@@ -39,11 +40,12 @@ steam-review-sentiment/
     ├── requirements-dev.txt       # + test dependencies
     ├── app/
     │   ├── main.py                # FastAPI app: endpoints, CORS, error handling
-    │   ├── steam.py               # Steam API client: reviews and store search (retries)
+    │   ├── steam.py               # Steam API client: reviews, news and store search (retries)
     │   ├── search.py              # Game search: cache and typo fallback
     │   ├── sentiment.py           # Sentiment classifier: scoring and labels
     │   ├── sentiment_model.pkl    # The trained classifier (built by train_model.py)
     │   ├── topics.py              # Topic keywords and per-topic sentiment
+    │   ├── updates.py             # Game updates and before/after sentiment around them
     │   └── db.py                  # Saving, scoring and topic-tagging reviews in PostgreSQL
     ├── experiments/               # Model comparison: VADER vs transformer vs TF-IDF (results.md)
     ├── scripts/
@@ -100,12 +102,14 @@ Other commands, run inside `frontend/`: `npm run build` type-checks and builds f
 |---|---|
 | `POST /games/{app_id}/fetch?max_reviews=1000` | Fetches the newest English reviews (1–5,000), saves new ones, scores them. Returns `fetched`, `new`, `scored`. |
 | `GET /games/{app_id}/summary` | Total reviews, % positive / neutral / negative, `agreement_pct` (the label matches the player's vote; neutral counts as a miss), and `baseline_pct` (what always guessing the more common vote would score). |
-| `GET /games/{app_id}/trend` | Average model score (−1 likely Not recommended … +1 likely Recommended) and review count per month (UTC), by the date reviews were posted. |
+| `GET /games/{app_id}/trend` | Average model score (−1 likely Not recommended … +1 likely Recommended) and review count per week (Monday to Sunday, UTC), by the date reviews were posted. Weeks without reviews are left out. |
 | `GET /games/{app_id}/topics` | For each of the 8 topics, most mentioned first: how many reviews mention it, how many of those praise it / are neutral / complain, and up to 3 praise and 3 complaint excerpts (most helpful first). `total_reviews` is every scored review, including those that mention no topic. |
+| `POST /games/{app_id}/updates/fetch` | Reads the game's official Steam news for updates, then fetches the reviews from the 14 days before and after the newest update that doesn't have them yet (up to 100 per day, about 35 s). Returns `updates_found`, `fetched_day`, `new_reviews` and `remaining`; call again until `remaining` is 0. Answers `429` with `Retry-After` when Steam is rate limiting. |
+| `GET /games/{app_id}/updates` | Updates from the last 12 months (newest first, at most 10 finished ones), each with the reviews, average score and % Recommended in the 14 days before and after, the change, and a status. Plus the 3 biggest rises and drops among updates with 30+ reviews on each side. Before/after numbers only, not cause and effect. |
 | `GET /search?q=hollow kni` | Up to 10 games matching a name (app ID, name, cover image URL), most relevant first. Results are cached for an hour. If nothing matches, the last letter is dropped and the search retried (up to 3 times); `matched_query` says which search produced the results. |
 | `GET /games/{app_id}/reviews?sentiment=negative&page=1&page_size=20` | Reviews newest first, optionally one sentiment. `page_size` up to 100; `total` is the count across all pages. |
 
-Errors: `404` when a game has no stored reviews (fetch it first) or Steam has none, `422` for invalid input, `502` when Steam fails after retries, `503` when the database is unreachable.
+Errors: `404` when a game has no stored reviews (fetch it first) or Steam has none, `422` for invalid input, `429` when Steam is rate limiting the update fetch, `502` when Steam fails after retries, `503` when the database is unreachable.
 
 Each fetch starts from the newest review, so fetching again only adds reviews posted since. To reach further back in time (a longer trend), use a bigger `max_reviews`.
 
@@ -159,6 +163,15 @@ After changing the keywords, or on a database created before topics existed, add
 docker compose exec db psql -U steam -d steam_reviews -f /docker-entrypoint-initdb.d/init.sql
 python backend/scripts/score_sentiment.py --rescore
 docker compose up -d --build
+```
+
+## Sentiment around updates
+
+Updates are found in each game's official Steam news by [`backend/app/updates.py`](backend/app/updates.py): Steam's patch-notes tag, or a title that names a patch, hotfix, changelog or version, or says an update or season is "now live". The reviews around each update are fetched with a date range on Steam's review API that the Steam store uses but Valve doesn't document, so it could stop working. The fetched reviews join the game's other stored reviews, so the summary and charts include them too.
+
+On a database created before this feature, add the new tables first:
+```bash
+docker compose exec db psql -U steam -d steam_reviews -f /docker-entrypoint-initdb.d/init.sql
 ```
 
 ## Running without Docker
