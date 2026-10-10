@@ -1,13 +1,15 @@
-"""Talks to Steam: fetches a game's English reviews, and searches the store by name."""
+"""Talks to Steam: fetches a game's English reviews and its official news, and searches the store by name."""
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, time as day_time, timezone
 
 import requests
 
 STEAM_REVIEWS_URL = "https://store.steampowered.com/appreviews/{app_id}"
 STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"  # undocumented, used by the store's own search box
+NEWS_URL = "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
+NEWS_COUNT = 100           # official posts to read; covers 12 months for every game we checked
 PAGE_SIZE = 100            # Steam's maximum reviews per request
 DELAY_BETWEEN_PAGES = 1.0  # seconds; be polite to Steam's servers
 MAX_RETRIES = 3
@@ -21,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 class SteamError(Exception):
     """Steam's API failed, or sent back something we can't use."""
+
+
+class SteamRateLimited(SteamError):
+    """Steam kept answering 429 Too Many Requests. In real runs that lasted a minute or two."""
 
 
 def is_retryable(status: int) -> bool:
@@ -44,6 +50,7 @@ def get_json(url: str, params: dict, what: str, timeout: float = 30, max_retries
     """
     for attempt in range(1, max_retries + 1):
         retry_after = None
+        status = None
         try:
             response = requests.get(url, params=params, timeout=timeout)
         except (requests.ConnectionError, requests.Timeout) as error:
@@ -56,11 +63,13 @@ def get_json(url: str, params: dict, what: str, timeout: float = 30, max_retries
                     raise SteamError(f"Steam sent a response that isn't JSON for {what}") from error
             if not is_retryable(response.status_code):
                 raise SteamError(f"Steam returned HTTP {response.status_code} for {what}")
-            problem = f"HTTP {response.status_code}"
+            status = response.status_code
+            problem = f"HTTP {status}"
             retry_after = response.headers.get("Retry-After")
 
         if attempt == max_retries:
-            raise SteamError(f"Steam request for {what} failed {max_retries} times ({problem})")
+            error = SteamRateLimited if status == 429 else SteamError
+            raise error(f"Steam request for {what} failed {max_retries} times ({problem})")
         wait = retry_wait(attempt, retry_after)
         logger.warning("Steam request failed (%s), retrying in %ss...", problem, wait)
         time.sleep(wait)
@@ -81,6 +90,57 @@ def fetch_page(app_id: int, cursor: str) -> dict:
     if data.get("success") != 1:
         raise SteamError(f"Steam returned success={data.get('success')} for app {app_id}")
     return data
+
+
+def fetch_reviews_on_day(app_id: int, day: date) -> list[dict]:
+    """
+    Up to 100 of the reviews posted on one day (UTC), newest first. Uses the date range
+    the Steam store's own review filter uses; it isn't in Valve's documentation, so the
+    answer is checked: if none of the reviews are from that day, Steam ignored the range.
+    """
+    start = int(datetime.combine(day, day_time(), tzinfo=timezone.utc).timestamp())
+    end = start + 24 * 60 * 60 - 1
+    params = {
+        "json": 1,
+        "language": "english",
+        "filter": "recent",
+        "review_type": "all",
+        "purchase_type": "all",
+        "num_per_page": PAGE_SIZE,
+        "cursor": "*",
+        "start_date": start,
+        "end_date": end,
+        "date_range_type": "include",
+    }
+    data = get_json(STEAM_REVIEWS_URL.format(app_id=app_id), params, f"app {app_id} on {day}")
+    if data.get("success") != 1:
+        raise SteamError(f"Steam returned success={data.get('success')} for app {app_id} on {day}")
+    reviews = data.get("reviews", [])
+    on_day = [r for r in reviews if start <= r["timestamp_created"] <= end]
+    if reviews and not on_day:
+        raise SteamError(f"Steam ignored the date range for app {app_id} on {day}")
+    return on_day
+
+
+def fetch_news(app_id: int) -> list[dict]:
+    """A game's latest official announcements (no press articles), newest first:
+    each with its id, title, link, time posted and Steam's tags (e.g. "patchnotes")."""
+    params = {"appid": app_id, "count": NEWS_COUNT, "maxlength": 1, "feeds": "steam_community_announcements"}
+    data = get_json(NEWS_URL, params, f"news for app {app_id}")
+    try:
+        items = data["appnews"]["newsitems"]
+    except (KeyError, TypeError) as error:
+        raise SteamError(f"Steam sent news in an unexpected format for app {app_id}") from error
+    return [
+        {
+            "gid": item["gid"],
+            "title": item["title"],
+            "url": item["url"],
+            "posted_at": datetime.fromtimestamp(item["date"], tz=timezone.utc),
+            "tags": item.get("tags", []),
+        }
+        for item in items
+    ]
 
 
 def search_store(term: str) -> list[dict]:

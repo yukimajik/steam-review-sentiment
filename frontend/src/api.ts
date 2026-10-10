@@ -14,15 +14,56 @@ export interface Summary {
   baseline_pct: number // what always guessing the more common vote would score
 }
 
-export interface TrendMonth {
-  month: string // "2026-08"
+export interface TrendWeek {
+  week: string // the Monday it starts on, "2026-09-21"
   avg_compound: number // -1 to +1
   review_count: number
 }
 
 export interface Trend {
   app_id: number
-  months: TrendMonth[]
+  weeks: TrendWeek[] // only weeks with reviews; there can be gaps
+}
+
+export interface WindowStats {
+  reviews: number
+  avg_score: number | null // average model score, -1 to +1
+  recommended_pct: number | null // share of these reviewers who voted Recommended
+}
+
+export interface UpdatePost {
+  gid: string
+  title: string
+  url: string
+  posted_at: string
+}
+
+export type UpdateStatus = 'ready' | 'too_few_reviews' | 'needs_reviews' | 'too_recent'
+
+export interface UpdateComparison {
+  day: string // "2026-09-22": compared are the 14 days before it and the 14 after
+  posts: UpdatePost[] // the update, plus further update posts less than 14 days after it
+  status: UpdateStatus
+  before: WindowStats | null
+  after: WindowStats | null
+  shift: number | null // after minus before, in average score
+}
+
+export interface Updates {
+  app_id: number
+  window_days: number
+  min_reviews: number // per side, to be ranked
+  updates: UpdateComparison[] // last 12 months, newest first
+  biggest_rises: UpdateComparison[]
+  biggest_drops: UpdateComparison[]
+}
+
+export interface UpdateFetchResult {
+  app_id: number
+  updates_found: number
+  fetched_day: string | null
+  new_reviews: number
+  remaining: number
 }
 
 export type Topic = 'performance' | 'bugs' | 'price' | 'story' | 'gameplay' | 'graphics' | 'multiplayer' | 'content'
@@ -105,6 +146,8 @@ function messageFor(status: number, detail: unknown): string {
       return typeof detail === 'string' ? detail : 'Not found.'
     case 422:
       return typeof detail === 'string' ? detail : "That isn't a valid request."
+    case 429:
+      return 'Steam is limiting requests right now. Try again in a minute.'
     case 502:
       return "Steam isn't responding right now. Try again in a minute."
     case 503:
@@ -143,6 +186,15 @@ export function getTrend(appId: number, signal?: AbortSignal) {
 
 export function getTopics(appId: number, signal?: AbortSignal) {
   return request<Topics>(`/games/${appId}/topics`, { signal })
+}
+
+export function getUpdates(appId: number, signal?: AbortSignal) {
+  return request<Updates>(`/games/${appId}/updates`, { signal })
+}
+
+/** Reads the game's Steam news, then fetches the reviews around one update (about 35 seconds). */
+export function fetchUpdateReviews(appId: number, signal?: AbortSignal) {
+  return request<UpdateFetchResult>(`/games/${appId}/updates/fetch`, { method: 'POST', signal })
 }
 
 export function getReviews(appId: number, sentiment: Sentiment | null, page: number, pageSize: number, signal?: AbortSignal) {

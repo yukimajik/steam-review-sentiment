@@ -3,7 +3,7 @@
 import pytest
 import requests
 
-from app.steam import MAX_RETRY_WAIT, SteamError, fetch_page, fetch_reviews
+from app.steam import MAX_RETRY_WAIT, SteamError, SteamRateLimited, fetch_page, fetch_reviews
 from tests.helpers import FakeResponse, steam_page, steam_review
 
 
@@ -75,3 +75,9 @@ def test_stops_at_max_reviews(fake_steam):
     pages = list(fetch_reviews(620, max_reviews=2))
     assert [len(page) for page in pages] == [2]
     assert len(fake_steam.calls) == 1
+
+
+def test_rate_limit_that_doesnt_lift_is_reported_as_such(fake_steam):
+    fake_steam.responses = [FakeResponse(429)] * 3
+    with pytest.raises(SteamRateLimited, match="HTTP 429"):
+        fetch_page(620, "*")

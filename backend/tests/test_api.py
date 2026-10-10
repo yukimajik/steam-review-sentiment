@@ -125,17 +125,20 @@ def test_summary_unknown_game_returns_404(client):
 
 # ---------- GET /games/{app_id}/trend ----------
 
-def test_trend_averages_by_month(client, conn):
-    add_review(conn, 1, compound=0.5, created_at=day(7, 1))
-    add_review(conn, 2, compound=-0.1, created_at=day(7, 31))
-    add_review(conn, 3, compound=0.3, created_at=day(8))
+def test_trend_averages_by_week(client, conn):
+    # Weeks run Monday to Sunday in UTC: Sep 21 2026 is a Monday, Sep 27 a Sunday
+    add_review(conn, 1, compound=0.5, created_at=datetime(2026, 9, 21, 0, 0, tzinfo=timezone.utc))
+    add_review(conn, 2, compound=-0.1, created_at=datetime(2026, 9, 27, 23, 59, tzinfo=timezone.utc))
+    add_review(conn, 3, compound=0.3, created_at=datetime(2026, 9, 28, 0, 0, tzinfo=timezone.utc))
+    add_review(conn, 4, compound=0.9, created_at=datetime(2026, 10, 19, tzinfo=timezone.utc))  # after an empty gap
 
     response = client.get("/games/620/trend")
 
     assert response.status_code == 200
-    assert response.json() == {"app_id": 620, "months": [
-        {"month": "2026-07", "avg_compound": 0.2, "review_count": 2},
-        {"month": "2026-08", "avg_compound": 0.3, "review_count": 1},
+    assert response.json() == {"app_id": 620, "weeks": [
+        {"week": "2026-09-21", "avg_compound": 0.2, "review_count": 2},
+        {"week": "2026-09-28", "avg_compound": 0.3, "review_count": 1},
+        {"week": "2026-10-19", "avg_compound": 0.9, "review_count": 1},
     ]}
 
 

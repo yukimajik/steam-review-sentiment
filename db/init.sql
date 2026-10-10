@@ -32,3 +32,22 @@ CREATE TABLE IF NOT EXISTS review_topics (
     sentiment_label   TEXT NOT NULL CHECK (sentiment_label IN ('positive', 'neutral', 'negative')),
     PRIMARY KEY (recommendation_id, topic)
 );
+
+-- Updates found in each game's official Steam news (backend/app/updates.py), for comparing
+-- review sentiment in the 2 weeks before and after each one.
+CREATE TABLE IF NOT EXISTS game_updates (
+    gid       TEXT PRIMARY KEY,         -- Steam's ID for the news post
+    app_id    INTEGER NOT NULL,
+    title     TEXT NOT NULL,
+    url       TEXT NOT NULL,
+    posted_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_game_updates_app_id ON game_updates (app_id);
+
+-- Days whose reviews (up to 100 per day) were fetched for those comparisons. A day shared by
+-- two updates' windows is fetched once, and an interrupted fetch resumes where it stopped.
+CREATE TABLE IF NOT EXISTS update_review_days (
+    app_id INTEGER NOT NULL,
+    day    DATE NOT NULL,
+    PRIMARY KEY (app_id, day)
+);

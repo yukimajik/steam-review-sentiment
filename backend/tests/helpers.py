@@ -54,3 +54,29 @@ def store_item(app_id, name, item_type="app"):
 
 def store_search_page(items):
     return FakeResponse(payload={"total": len(items), "items": items})
+
+
+def add_update(conn, gid, posted_at, title="Patch 1.0.0", app_id=620):
+    """Store an update post, as if found in the game's Steam news."""
+    conn.execute(
+        "INSERT INTO game_updates (gid, app_id, title, url, posted_at) VALUES (%s, %s, %s, %s, %s)",
+        (gid, app_id, title, f"https://steam.example.test/news/{gid}", posted_at),
+    )
+    conn.commit()
+
+
+def mark_days_fetched(conn, days, app_id=620):
+    """Record days as if their reviews had been fetched for the before/after comparison."""
+    for day in days:
+        conn.execute("INSERT INTO update_review_days (app_id, day) VALUES (%s, %s)", (app_id, day))
+    conn.commit()
+
+
+def news_item(gid, title, posted_at, tags=()):
+    """One official news post in the shape of Steam's GetNewsForApp JSON."""
+    return {"gid": str(gid), "title": title, "url": f"https://steam.example.test/news/{gid}",
+            "date": int(posted_at.timestamp()), "feedname": "steam_community_announcements", "tags": list(tags)}
+
+
+def news_page(items):
+    return FakeResponse(payload={"appnews": {"appid": 620, "newsitems": items, "count": len(items)}})

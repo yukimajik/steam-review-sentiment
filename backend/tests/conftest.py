@@ -38,7 +38,7 @@ def test_database_url() -> str:
 def conn(test_database_url):
     """A connection to the test database, starting each test with empty tables."""
     with psycopg.connect(test_database_url) as conn:
-        conn.execute("TRUNCATE reviews, review_topics")
+        conn.execute("TRUNCATE reviews, review_topics, game_updates, update_review_days")
         conn.commit()
         yield conn
 
