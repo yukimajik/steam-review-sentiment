@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import type { Sentiment, Summary } from '../api'
 import { formatCount, formatPct, SENTIMENT_COLORS, SENTIMENT_LABELS } from '../format'
+import { CountUp } from './CountUp'
+
+const formatWhole = (n: number) => formatCount(Math.round(n))
 
 // The donut is drawn by hand rather than with Recharts so that positive (clockwise) and
 // negative (counterclockwise) can both start at 12 o'clock: the seam at the top is where
@@ -95,7 +98,7 @@ export function SentimentSplit({ summary }: { summary: Summary }) {
                 </>
               ) : (
                 <>
-                  <strong>{formatCount(summary.total_reviews)}</strong>
+                  <strong><CountUp value={summary.total_reviews} format={formatWhole} /></strong>
                   <span>English reviews</span>
                 </>
               )}
@@ -104,7 +107,7 @@ export function SentimentSplit({ summary }: { summary: Summary }) {
           <SplitSide sentiment="positive" pct={summary.positive_pct} active={active} {...hover('positive')} />
           <p className={active === 'neutral' ? 'split-neutral is-active' : 'split-neutral'} {...hover('neutral')}>
             <span className="dot" style={{ background: SENTIMENT_COLORS.neutral }} />
-            Neutral <strong>{formatPct(summary.neutral_pct)}</strong>
+            Neutral <strong><CountUp value={summary.neutral_pct} format={formatPct} /></strong>
           </p>
         </div>
       </div>
@@ -124,7 +127,7 @@ function SplitSide({ sentiment, pct, active, onMouseEnter, onMouseLeave }: {
   const className = `split-side is-${sentiment}${active === sentiment ? ' is-active' : ''}`
   return (
     <div className={className} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
-      <p className="split-value">{formatPct(pct)}</p>
+      <p className="split-value"><CountUp value={pct} format={formatPct} /></p>
       <p className="split-label">
         <span className="dot" style={{ background: SENTIMENT_COLORS[sentiment] }} />
         {SENTIMENT_LABELS[sentiment]}
@@ -143,7 +146,7 @@ function Agreement({ summary }: { summary: Summary }) {
   return (
     <div className="hero-agreement">
       <h3>Model agreement</h3>
-      <p className="agreement-value">{formatPct(summary.agreement_pct)}</p>
+      <p className="agreement-value"><CountUp value={summary.agreement_pct} format={formatPct} /></p>
       {/* Bar: the model's agreement. Tick: the baseline it should beat. */}
       <div className="meter" aria-hidden="true">
         <span className="meter-fill" style={{ width: `${summary.agreement_pct}%` }} />

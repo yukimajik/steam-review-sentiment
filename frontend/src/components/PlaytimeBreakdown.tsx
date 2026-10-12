@@ -1,9 +1,11 @@
 import type { Playtime, PlaytimeGroupStats } from '../api'
 import { formatCount, formatPct, formatScore, PLAYTIME_LABELS, SENTIMENT_COLORS } from '../format'
+import { useSeenOnce } from '../motion'
 
 // One row per playtime group, split like the rest of the page: the share who voted Not recommended
 // to the left of the line, Recommended to the right. These are the players' own votes, not the model.
 export function PlaytimeBreakdown({ data }: { data: Playtime }) {
+  const [rowsRef, seen] = useSeenOnce<HTMLOListElement>() // the bars grow out from the line when first on screen
   const description = data.groups
     .map((g) => `${PLAYTIME_LABELS[g.group]}: ${g.recommended_pct === null
       ? `${formatCount(g.recommended)} of ${formatCount(g.reviews)} recommended`
@@ -27,7 +29,7 @@ export function PlaytimeBreakdown({ data }: { data: Playtime }) {
           <li><span className="swatch" style={{ background: SENTIMENT_COLORS.negative }} /> Not recommended</li>
           <li><span className="swatch" style={{ background: SENTIMENT_COLORS.positive }} /> Recommended</li>
         </ul>
-        <ol className="playtime-rows" role="img" aria-label={`Share who recommend the game, by playtime. ${description}.`}>
+        <ol ref={rowsRef} className={seen ? 'playtime-rows is-seen' : 'playtime-rows'} role="img" aria-label={`Share who recommend the game, by playtime. ${description}.`}>
           {data.groups.map((g) => <PlaytimeRow key={g.group} stats={g} />)}
         </ol>
         {data.unknown_playtime > 0 && (
