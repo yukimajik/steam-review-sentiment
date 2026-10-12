@@ -11,6 +11,7 @@ import { SentimentSplit, SentimentSplitSkeleton } from './components/SentimentSp
 import { TopicBreakdown } from './components/TopicBreakdown'
 import { ChartSkeleton, TrendChart } from './components/TrendChart'
 import { UpdateShifts } from './components/UpdateShifts'
+import { SectionNav } from './components/SectionNav'
 import { formatCount } from './format'
 
 const FETCH_COUNT = 1000 // reviews to fetch when a game isn't stored yet
@@ -100,6 +101,7 @@ export default function App() {
         </div>
         {/* Disabled while fetching, so the result can't land on a different game */}
         <GameSearch onSelect={pickGame} disabled={fetching} />
+        {dashboard?.status === 'ready' && <SectionNav />}
       </header>
 
       <main>
@@ -111,10 +113,13 @@ export default function App() {
           </p>
         ) : (
           <>
-            <GameHero game={game}>
-              {dashboard === null && <SentimentSplitSkeleton />}
-              {dashboard?.status === 'ready' && <SentimentSplit summary={dashboard.summary} />}
-            </GameHero>
+            {/* The ids are what the section links in the bar scroll to */}
+            <div id="overview" className="anchor">
+              <GameHero game={game}>
+                {dashboard === null && <SentimentSplitSkeleton />}
+                {dashboard?.status === 'ready' && <SentimentSplit summary={dashboard.summary} />}
+              </GameHero>
+            </div>
 
             {dashboard === null && (
               <div className="dashboard" aria-busy="true">
@@ -162,23 +167,32 @@ export default function App() {
 
             {dashboard?.status === 'ready' && (
               <div className="dashboard">
-                <TrendChart
-                  appId={appId}
-                  weeks={dashboard.trend.weeks}
-                  updateTimes={dashboard.updates.updates.map((u) => Date.parse(u.posts[0].posted_at))}
-                  weeksToFill={dashboard.trend.weeks_to_fill}
-                  onFilled={() => setReloadKey((key) => key + 1)}
-                />
-                <PlaytimeBreakdown data={dashboard.playtime} />
-                <UpdateShifts
-                  key={`updates-${appId}`}
-                  appId={appId}
-                  data={dashboard.updates}
-                  onFetched={() => setReloadKey((key) => key + 1)}
-                />
-                {/* Its key must differ from ReviewList's: siblings can't share one */}
-                <TopicBreakdown key={`topics-${appId}`} data={dashboard.topics} />
-                <ReviewList key={appId} appId={appId} />
+                <div id="trend" className="anchor">
+                  <TrendChart
+                    appId={appId}
+                    weeks={dashboard.trend.weeks}
+                    updateTimes={dashboard.updates.updates.map((u) => Date.parse(u.posts[0].posted_at))}
+                    weeksToFill={dashboard.trend.weeks_to_fill}
+                    onFilled={() => setReloadKey((key) => key + 1)}
+                  />
+                </div>
+                <div id="playtime" className="anchor">
+                  <PlaytimeBreakdown data={dashboard.playtime} />
+                </div>
+                <div id="updates" className="anchor">
+                  <UpdateShifts
+                    key={`updates-${appId}`}
+                    appId={appId}
+                    data={dashboard.updates}
+                    onFetched={() => setReloadKey((key) => key + 1)}
+                  />
+                </div>
+                <div id="topics" className="anchor">
+                  <TopicBreakdown key={`topics-${appId}`} data={dashboard.topics} />
+                </div>
+                <div id="reviews" className="anchor">
+                  <ReviewList key={appId} appId={appId} />
+                </div>
               </div>
             )}
           </>

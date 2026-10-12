@@ -203,6 +203,59 @@ main {
   max-width: 440px;
 }
 
+/* ---------- Section links in the bar ---------- */
+.section-nav {
+  flex-basis: 100%;
+  margin: -4px 0 -16px; /* the active underline sits on the bar's bottom edge */
+  overflow-x: auto; /* phones scroll the links sideways instead of wrapping */
+  scrollbar-width: none;
+}
+
+.section-nav ul {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.section-nav a {
+  position: relative;
+  display: block;
+  padding: 8px 10px 12px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink-3);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.section-nav a:hover {
+  color: var(--ink);
+}
+
+.section-nav a[aria-current] {
+  color: var(--ink);
+}
+
+/* The section you're reading is underlined, on the bar's own edge */
+.section-nav a[aria-current]::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+/* Section links land just below the bar instead of under it */
+.anchor {
+  scroll-margin-top: 16px;
+}
+
 /* In the bar, the search's label and hint are kept for screen readers only */
 .page:not(.is-home) .search label,
 .page:not(.is-home) .field-help {
@@ -335,6 +388,38 @@ main {
 .game-search input:focus-visible {
   border-color: var(--ink-3);
   outline-offset: 3px;
+}
+
+.game-search input {
+  padding-right: 44px; /* room for the key hint */
+}
+
+/* The "/" hint inside the box; hidden while typing and on touch screens, which have no keyboard */
+.search-key {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  min-width: 22px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--ground);
+  font: 600 0.75rem / 1.4 var(--font-body);
+  color: var(--ink-3);
+  text-align: center;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.game-search:focus-within .search-key {
+  opacity: 0;
+}
+
+@media (hover: none) {
+  .search-key {
+    display: none;
+  }
 }
 
 .game-search input::placeholder {
@@ -629,7 +714,7 @@ main {
   line-height: 1;
 }
 
-.donut-center span {
+.donut-center > span {
   margin-top: 2px;
   font-size: 0.75rem;
   line-height: 1.25;
@@ -689,10 +774,39 @@ main {
     animation: fade 450ms 350ms ease-out backwards;
   }
 
-  /* The game's name comes into focus as the donut starts to draw */
+  /* The game's name comes into focus as the donut starts to draw, and the numbers count up
+     with it (CountUp); the agreement bar fills over the same time */
   .hero-title h2 {
     animation: focus-in 700ms cubic-bezier(0.25, 0.8, 0.25, 1) backwards;
   }
+
+  .meter-fill {
+    transform-origin: left;
+    animation: grow 800ms cubic-bezier(0.25, 0.8, 0.25, 1) backwards;
+  }
+
+  /* Playtime bars grow out from the middle line the first time the section is on screen */
+  .playtime-bar {
+    transform-origin: left;
+    transition: transform 700ms cubic-bezier(0.25, 0.8, 0.25, 1);
+  }
+
+  .playtime-half.is-negative .playtime-bar {
+    transform-origin: right;
+  }
+
+  .playtime-rows:not(.is-seen) .playtime-bar {
+    transform: scaleX(0);
+  }
+
+  /* Section links glide to their section */
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@keyframes grow {
+  from { transform: scaleX(0); }
 }
 
 @keyframes focus-in {
@@ -1312,6 +1426,10 @@ main {
   }
 
   /* The bar stays at the top, see-through and blurred, so search is always in reach */
+  .page {
+    --bar-height: 124px; /* the bar with its section links: 123 px measured in the browser */
+  }
+
   .page:not(.is-home) .masthead {
     position: sticky;
     top: 0;
@@ -1325,8 +1443,12 @@ main {
   /* The heading column stays in view while a long section scrolls past, below the bar */
   .section-head {
     position: sticky;
-    top: 112px;
+    top: calc(var(--bar-height) + 24px);
     align-self: start;
+  }
+
+  .page:not(.is-home) .anchor {
+    scroll-margin-top: calc(var(--bar-height) + 16px);
   }
 }
 

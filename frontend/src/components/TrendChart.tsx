@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
   type TooltipContentProps,
 } from 'recharts'
 import { ApiError, getOfftopic, isAbort, type Offtopic, type OfftopicPeriod, type TrendWeek } from '../api'
 import { formatCount, formatDay, formatScore } from '../format'
+import { usePrefersReducedMotion, useSeenOnce } from '../motion'
 import { GapFill } from './GapFill'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -12,6 +13,7 @@ const WEEK_MS = 7 * DAY_MS
 // A week's average needs this many reviews to join the line; fewer are hollow dots. A single review
 // scored 0 made a cliff in Silksong's chart. Same minimum as the playtime groups and update comparison.
 const MIN_WEEK_REVIEWS = 30
+const NO_POINTS: Point[] = []
 
 interface Point {
   x: number // the middle of the week, in milliseconds
@@ -72,7 +74,11 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
   appId: number; weeks: TrendWeek[]; updateTimes: number[]; weeksToFill: number; onFilled: () => void
 }) {
   const offtopic = useOfftopic(appId)
-  const points = toPoints(weeks)
+  const points = useMemo(() => toPoints(weeks), [weeks]) // a new array each render would redraw the line
+  const [chartRef, seen] = useSeenOnce<HTMLDivElement>()
+  const reduced = usePrefersReducedMotion()
+  // Empty until the chart is first on screen, so the line draws itself in from the left
+  const shownPoints = seen || reduced ? points : NO_POINTS
   const last = weeks[weeks.length - 1]
   const start = weekStart(weeks[0].week)
   // Flagged periods during or after the stored reviews are drawn, and the axis stretches to show
@@ -110,13 +116,14 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
       <div className="section-body">
         <div
           className="trend"
+          ref={chartRef}
           role="img"
           aria-label={`Line chart of average sentiment by week${shownUpdates.length ? `, with ${shownUpdates.length} updates marked` : ''}` +
             `${drawn.length ? `, and ${drawn.length} off-topic ${drawn.length === 1 ? 'period' : 'periods'} shaded` : ''}. ` +
             `Most recent: week of ${formatDay(last.week)}, ${formatScore(last.avg_compound)}.`}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={points} margin={{ top: 24, right: 24, bottom: 0, left: -12 }}>
+            <LineChart data={shownPoints} margin={{ top: 24, right: 24, bottom: 0, left: -12 }}>
               <defs>
               <pattern id="offtopic-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
                 <line x1="0" y1="0" x2="0" y2="6" stroke="var(--ink-3)" strokeWidth="1.5" strokeOpacity="0.45" />
@@ -168,7 +175,8 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
                 connectNulls
                 dot={false}
                 activeDot={false}
-                isAnimationActive={false}
+                isAnimationActive={!reduced}
+                animationDuration={900}
               />
               <Line
                 type="linear"
@@ -178,7 +186,8 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
                 dot={{ r: 3, fill: 'var(--ink)', stroke: 'var(--panel)', strokeWidth: 2 }}
                 activeDot={{ r: 5, fill: 'var(--ink)', stroke: 'var(--panel)', strokeWidth: 2 }}
                 label={renderEndLabel}
-                isAnimationActive={false}
+                isAnimationActive={!reduced}
+                animationDuration={900}
               />
               {/* Weeks with too few reviews: hollow dots, joined only by the dashed line */}
               <Line
@@ -187,7 +196,8 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
                 stroke="none"
                 dot={{ r: 3.5, fill: 'var(--panel)', stroke: 'var(--ink-3)', strokeWidth: 1.5 }}
                 activeDot={{ r: 5, fill: 'var(--panel)', stroke: 'var(--ink-3)', strokeWidth: 2 }}
-                isAnimationActive={false}
+                isAnimationActive={!reduced}
+                animationDuration={900}
               />
             </LineChart>
           </ResponsiveContainer>

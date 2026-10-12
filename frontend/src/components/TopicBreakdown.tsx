@@ -1,10 +1,11 @@
-import { useState, type CSSProperties } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import {
   Bar, BarChart, CartesianGrid, Rectangle, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
   type BarShapeProps, type TooltipContentProps,
 } from 'recharts'
 import type { Topic, TopicExample, Topics, TopicSummary } from '../api'
 import { formatCount, formatPct, formatScore, SENTIMENT_COLORS, TOPIC_LABELS } from '../format'
+import { usePrefersReducedMotion, useSeenOnce } from '../motion'
 
 interface Row {
   topic: Topic
@@ -18,6 +19,19 @@ interface Row {
 // Rendered with a key per game, so a new game starts on its own most-mentioned topic.
 export function TopicBreakdown({ data }: { data: Topics }) {
   const [selected, setSelected] = useState<Topic | null>(null)
+  const [chartRef, seen] = useSeenOnce<HTMLDivElement>()
+  const reduced = usePrefersReducedMotion()
+  // Built once per game: a new array on every render would make the bars animate again
+  const rows: Row[] = useMemo(() => data.topics.map((summary) => ({
+    topic: summary.topic,
+    label: TOPIC_LABELS[summary.topic],
+    mentionPct: (100 * summary.mentions) / data.total_reviews,
+    complaintPct: (-100 * summary.negative) / data.total_reviews,
+    praisePct: (100 * summary.positive) / data.total_reviews,
+    summary,
+  })), [data])
+  // Until the chart is first on screen its bars are at zero, so they grow out from the middle line
+  const flat = useMemo(() => rows.map((r) => ({ ...r, complaintPct: 0, praisePct: 0 })), [rows])
   const mentioned = data.topics.filter((t) => t.mentions > 0)
   const shown = data.topics.find((t) => t.topic === selected) ?? mentioned[0]
 
@@ -37,15 +51,6 @@ export function TopicBreakdown({ data }: { data: Topics }) {
     )
   }
 
-  const share = (count: number) => (100 * count) / data.total_reviews
-  const rows: Row[] = data.topics.map((summary) => ({
-    topic: summary.topic,
-    label: TOPIC_LABELS[summary.topic],
-    mentionPct: share(summary.mentions),
-    complaintPct: -share(summary.negative),
-    praisePct: share(summary.positive),
-    summary,
-  }))
   // Same scale on both sides, so zero sits in the middle and praise and complaints compare fairly
   const largest = Math.max(...rows.map((r) => Math.max(r.praisePct, -r.complaintPct)))
   const limit = Math.max(10, Math.ceil(largest / 10) * 10)
@@ -77,9 +82,9 @@ export function TopicBreakdown({ data }: { data: Topics }) {
           <li><span className="swatch" style={{ background: SENTIMENT_COLORS.negative }} /> Complaints</li>
           <li><span className="swatch" style={{ background: SENTIMENT_COLORS.positive }} /> Praise</li>
         </ul>
-        <div className="topics-chart" role="img" aria-label={description}>
+        <div className="topics-chart" role="img" aria-label={description} ref={chartRef}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={rows} layout="vertical" stackOffset="sign" margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
+            <BarChart data={seen || reduced ? rows : flat} layout="vertical" stackOffset="sign" margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
               <CartesianGrid horizontal={false} stroke="var(--grid)" />
               <XAxis
                 type="number"
@@ -102,9 +107,9 @@ export function TopicBreakdown({ data }: { data: Topics }) {
               <ReferenceLine x={0} stroke="var(--ink)" strokeOpacity={0.5} />
               <Tooltip content={TopicTooltip} cursor={{ fill: 'var(--grid)', fillOpacity: 0.5 }} />
               <Bar dataKey="complaintPct" stackId="topic" fill={SENTIMENT_COLORS.negative} shape={renderBar}
-                radius={[4, 0, 0, 4]} onClick={select} cursor="pointer" isAnimationActive={false} />
+                radius={[4, 0, 0, 4]} onClick={select} cursor="pointer" isAnimationActive={!reduced} animationDuration={700} />
               <Bar dataKey="praisePct" stackId="topic" fill={SENTIMENT_COLORS.positive} shape={renderBar}
-                radius={[0, 4, 4, 0]} onClick={select} cursor="pointer" isAnimationActive={false} />
+                radius={[0, 4, 4, 0]} onClick={select} cursor="pointer" isAnimationActive={!reduced} animationDuration={700} />
             </BarChart>
           </ResponsiveContainer>
         </div>

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { ApiError, isAbort, searchGames, type SearchResponse, type SearchResult } from '../api'
 
 const DEBOUNCE_MS = 300 // search once typing pauses, not on every keystroke
@@ -20,6 +20,23 @@ export function GameSearch({ onSelect, disabled }: Props) {
   // The latest answer, tagged with the query it answers, so an old answer is never taken for the current one
   const [answer, setAnswer] = useState<{ query: string; data?: SearchResponse; error?: string } | null>(null)
   const listId = useId()
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // "/" anywhere (except while typing in another field), or Cmd/Ctrl+K, jumps to the search box
+  useEffect(() => {
+    function onKeyDown(event: globalThis.KeyboardEvent) {
+      const target = event.target as HTMLElement
+      const typing = target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+      const slash = event.key === '/' && !typing && !event.metaKey && !event.ctrlKey && !event.altKey
+      const commandK = event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)
+      if (!slash && !commandK) return
+      event.preventDefault()
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const query = clean(text)
   const tooShort = query.length < MIN_CHARS
@@ -81,6 +98,7 @@ export function GameSearch({ onSelect, disabled }: Props) {
       <label htmlFor="game-search">Search for a game</label>
       <div className="game-search">
         <input
+          ref={inputRef}
           id="game-search"
           type="text"
           role="combobox"
@@ -89,6 +107,7 @@ export function GameSearch({ onSelect, disabled }: Props) {
           aria-autocomplete="list"
           aria-activedescendant={showPopup && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
           aria-describedby="game-search-help"
+          aria-keyshortcuts="/ Control+K Meta+K"
           autoComplete="off"
           spellCheck={false}
           placeholder="e.g. Hollow Knight"
@@ -103,6 +122,7 @@ export function GameSearch({ onSelect, disabled }: Props) {
           onBlur={() => setOpen(false)}
           onKeyDown={handleKeyDown}
         />
+        <kbd className="search-key" aria-hidden="true">/</kbd>
 
         {showPopup && (
           // preventDefault keeps focus in the input, so clicking an option doesn't close the list first
@@ -147,7 +167,7 @@ export function GameSearch({ onSelect, disabled }: Props) {
         )}
       </div>
       <p id="game-search-help" className="field-help">
-        Results appear as you type. Pick a game to see its reviews.
+        Results appear as you type. Pick a game to see its reviews. Press / to search from anywhere.
       </p>
       {/* Read out by screen readers when the results change */}
       <p className="sr-only" role="status">
