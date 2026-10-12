@@ -6,7 +6,8 @@ const SECONDS_PER_WEEK = 1.5 // measured: 10 weeks took 14.3 s, scoring included
 const RATE_LIMIT_PAUSE_MS = 60_000 // same pause as fetching around updates
 const MAX_PAUSES = 5 // then give up and let the person try again later
 
-// Rendered with a key per game. `weeks` is how many gaps are still to fill; `onFilled` reloads the dashboard.
+// Rendered with a key per game. `weeks` is how many past weeks under 30 reviews are still to fill;
+// `onFilled` reloads the dashboard.
 export function GapFill({ appId, weeks, onFilled }: { appId: number; weeks: number; onFilled: () => void }) {
   const [progress, setProgress] = useState<{ done: number; paused?: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -41,7 +42,7 @@ export function GapFill({ appId, weeks, onFilled }: { appId: number; weeks: numb
       onFilled()
     } catch (err) {
       if (isAbort(err)) return
-      setError(err instanceof ApiError ? err.message : 'Filling the empty weeks failed.')
+      setError(err instanceof ApiError ? err.message : 'Filling the weeks failed.')
       setProgress(null)
     }
   }
@@ -55,17 +56,18 @@ export function GapFill({ appId, weeks, onFilled }: { appId: number; weeks: numb
           <span className="spinner" aria-hidden="true" />
           {progress.paused
             ? 'Steam asked us to slow down, so this is waiting a minute before continuing.'
-            : `Filled ${formatCount(progress.done)} of ${formatCount(weeks)} empty weeks…`}{' '}
+            : `Filled ${formatCount(progress.done)} of ${formatCount(weeks)} weeks…`}{' '}
           Keep this tab open.
         </p>
       ) : (
         <>
           <p>
-            {formatCount(weeks)} {weeks === 1 ? 'week has' : 'weeks have'} no stored reviews. Filling {weeks === 1 ? 'it' : 'them'}{' '}
-            fetches a sample of each week, its newest 100 reviews, in about {seconds} seconds.
+            {formatCount(weeks)} past {weeks === 1 ? 'week has' : 'weeks have'} fewer than 30 stored reviews. Steam may
+            have more: older reviews were only fetched around updates. Filling {weeks === 1 ? 'it' : 'them'} fetches a
+            sample of each week, its newest 100 reviews, in about {seconds} seconds.
           </p>
           <button type="button" className="button-primary" onClick={fillAll}>
-            Fill {weeks === 1 ? 'the empty week' : `${formatCount(weeks)} empty weeks`}
+            Fill {weeks === 1 ? 'the week' : `${formatCount(weeks)} weeks`}
           </button>
         </>
       )}

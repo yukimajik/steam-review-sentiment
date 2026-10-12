@@ -1,11 +1,11 @@
 """API endpoints, run against the test database with Steam faked (see conftest.py)."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import psycopg
 import pytest
 
-from app import db
+from app import db, updates
 from app.main import app, get_conn
 from tests.helpers import FakeResponse, add_review, add_topic, steam_page, steam_review
 
@@ -125,7 +125,8 @@ def test_summary_unknown_game_returns_404(client):
 
 # ---------- GET /games/{app_id}/trend ----------
 
-def test_trend_averages_by_week(client, conn):
+def test_trend_averages_by_week(client, conn, monkeypatch):
+    monkeypatch.setattr(updates, "today", lambda: date(2026, 10, 26))
     # Weeks run Monday to Sunday in UTC: Sep 21 2026 is a Monday, Sep 27 a Sunday
     add_review(conn, 1, compound=0.5, created_at=datetime(2026, 9, 21, 0, 0, tzinfo=timezone.utc))
     add_review(conn, 2, compound=-0.1, created_at=datetime(2026, 9, 27, 23, 59, tzinfo=timezone.utc))
@@ -139,7 +140,7 @@ def test_trend_averages_by_week(client, conn):
         {"week": "2026-09-21", "avg_compound": 0.2, "review_count": 2},
         {"week": "2026-09-28", "avg_compound": 0.3, "review_count": 1},
         {"week": "2026-10-19", "avg_compound": 0.9, "review_count": 1},
-    ], "weeks_to_fill": 2}  # Oct 5 and Oct 12 have no reviews
+    ], "weeks_to_fill": 5}  # all five weeks are over and under 30 reviews, the empty Oct 5 and Oct 12 included
 
 
 def test_trend_unknown_game_returns_404(client):

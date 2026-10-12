@@ -188,14 +188,14 @@ class TrendWeek(BaseModel):
 class Trend(BaseModel):
     app_id: int
     weeks: list[TrendWeek]  # only weeks with reviews; there can be gaps
-    weeks_to_fill: int      # gaps POST .../trend/fill hasn't asked Steam about yet
+    weeks_to_fill: int      # past weeks under 30 reviews that POST .../trend/fill hasn't asked Steam about yet
 
 
 class GapFillResult(BaseModel):
     app_id: int
-    filled_weeks: int  # empty weeks this request asked Steam about
+    filled_weeks: int  # weeks this request asked Steam about
     new_reviews: int
-    remaining: int     # empty weeks still to fill; call again for the next ones
+    remaining: int     # weeks still to fill; call again for the next ones
 
 
 # Weeks (Monday to Sunday) are in UTC so the result doesn't depend on the database server's time zone.
@@ -217,16 +217,16 @@ def game_trend(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_co
     if not rows:
         raise no_reviews(app_id)
     weeks = [TrendWeek(week=week, avg_compound=round(avg, 3), review_count=count) for week, avg, count in rows]
-    return Trend(app_id=app_id, weeks=weeks, weeks_to_fill=len(gaps.empty_weeks(conn, app_id)))
+    return Trend(app_id=app_id, weeks=weeks, weeks_to_fill=len(gaps.weeks_to_fill(conn, app_id, updates.today())))
 
 
 @app.post("/games/{app_id}/trend/fill", response_model=GapFillResult)
 def fill_trend_gaps(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
-    """Fill gaps in the weekly chart: for up to 10 weeks with no stored reviews (newest first), fetch
-    the newest 100 reviews of each week (one request per week, about 12 seconds in all). A sample,
-    not the whole week. Call again until `remaining` is 0."""
+    """Fill gaps in the weekly chart: for up to 10 past weeks with fewer than 30 stored reviews (newest
+    first), fetch the newest 100 reviews of each week (one request per week, about 15 seconds in all).
+    A sample, not the whole week. Call again until `remaining` is 0."""
     require_reviews(conn, app_id)
-    waiting = gaps.empty_weeks(conn, app_id)
+    waiting = gaps.weeks_to_fill(conn, app_id, updates.today())
     batch = waiting[:gaps.WEEKS_PER_REQUEST]
     try:
         new = gaps.fill_weeks(conn, app_id, batch)

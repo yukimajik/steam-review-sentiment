@@ -24,7 +24,7 @@ interface Point {
 
 const weekStart = (week: string) => Date.parse(`${week}T00:00:00Z`)
 
-/** One point per week from the first to the last, so weeks without reviews leave a gap in the line. */
+/** One point per week from the first to the last, so weeks without reviews are bridged by the dashed join. */
 function toPoints(weeks: TrendWeek[]): Point[] {
   const byWeek = new Map(weeks.map((w) => [w.week, w]))
   const points: Point[] = []
@@ -67,7 +67,7 @@ function ticksBetween(start: number, end: number): { ticks: number[]; format: (t
 }
 
 // `updateTimes`: when each game update was posted, in milliseconds, drawn as dashed lines.
-// `weeksToFill`: gaps not yet asked about; `onFilled` reloads the dashboard once they are.
+// `weeksToFill`: past weeks under 30 reviews not yet asked about; `onFilled` reloads the dashboard once they are.
 export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }: {
   appId: number; weeks: TrendWeek[]; updateTimes: number[]; weeksToFill: number; onFilled: () => void
 }) {
@@ -103,10 +103,8 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
           Model score from −1 (likely Not recommended) to +1 (likely Recommended), by review date
           {shownUpdates.length > 0 && '. Dashed lines mark game updates'}
           {drawn.length > 0 && '. Hatched areas mark periods Steam flagged as off-topic review activity'}.
-          {hasSparse && ` Hollow dots are weeks with fewer than ${MIN_WEEK_REVIEWS} reviews, too few to join the line.`}
-          {hasGaps && (weeksToFill > 0
-            ? ' Gaps are weeks with no stored reviews: older reviews were only fetched around updates.'
-            : ' Gaps are weeks Steam returned no English reviews for.')}
+          {hasSparse && ` Hollow dots are weeks with fewer than ${MIN_WEEK_REVIEWS} reviews, too few to rely on.`}
+          {(hasSparse || hasGaps) && ' A faint dashed line joins every week that has reviews, so the line doesn’t break where the solid line stops.'}
         </p>
       </div>
       <div className="section-body">
@@ -158,6 +156,20 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
                 <ReferenceLine key={time} x={time} stroke="var(--ink-3)" strokeDasharray="4 3" />
               ))}
               <Tooltip content={TrendTooltip} cursor={{ stroke: 'var(--axis)', strokeWidth: 1 }} />
+              {/* Every week with reviews, faint and dashed, under the solid line: where the solid line
+                  stops (a hollow dot or a week with none) this keeps the line from breaking */}
+              <Line
+                type="linear"
+                dataKey="avg_compound"
+                stroke="var(--ink-3)"
+                strokeWidth={1.5}
+                strokeDasharray="3 4"
+                strokeOpacity={0.7}
+                connectNulls
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+              />
               <Line
                 type="linear"
                 dataKey="solid"
@@ -168,7 +180,7 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
                 label={renderEndLabel}
                 isAnimationActive={false}
               />
-              {/* Weeks with too few reviews: dots only, never joined to anything */}
+              {/* Weeks with too few reviews: hollow dots, joined only by the dashed line */}
               <Line
                 type="linear"
                 dataKey="sparse"

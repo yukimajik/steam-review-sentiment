@@ -2,21 +2,34 @@
 
 from datetime import date, datetime, timedelta, timezone
 
-from app import gaps, steam
+import pytest
+
+from app import gaps, steam, updates
 from tests.helpers import FakeResponse, add_review, steam_page, steam_review
+
+TODAY = date(2026, 10, 12)  # a Monday: the week of Oct 5 is over, the week of Oct 12 isn't
+SEP_7, SEP_14, SEP_21, SEP_28 = date(2026, 9, 7), date(2026, 9, 14), date(2026, 9, 21), date(2026, 9, 28)
+
+
+@pytest.fixture(autouse=True)
+def fixed_today(monkeypatch):
+    monkeypatch.setattr(updates, "today", lambda: TODAY)
 
 
 def monday(day: date, hour: int = 0) -> datetime:
     return datetime(day.year, day.month, day.day, hour, tzinfo=timezone.utc)
 
 
-SEP_7, SEP_14, SEP_21, SEP_28 = date(2026, 9, 7), date(2026, 9, 14), date(2026, 9, 21), date(2026, 9, 28)
+def add_full_week(conn, week: date, first_id: int, app_id=620):
+    """30 reviews: enough for the week to be solid on the chart."""
+    for i in range(gaps.MIN_REVIEWS):
+        add_review(conn, first_id + i, app_id=app_id, created_at=monday(week, 12))
 
 
 def add_weeks_with_gaps(conn):
-    """Reviews in the weeks of Sep 7 and Sep 28, none in the two weeks between."""
-    add_review(conn, 1, created_at=monday(SEP_7, 12))
-    add_review(conn, 2, created_at=monday(SEP_28, 12))
+    """Full weeks of Sep 7 and Sep 28, none in the two weeks between."""
+    add_full_week(conn, SEP_7, 1)
+    add_full_week(conn, SEP_28, 100)
 
 
 def review_in(week: date, review_id: int):
@@ -30,14 +43,27 @@ def test_trend_counts_the_weeks_to_fill(client, conn):
     assert client.get("/games/620/trend").json()["weeks_to_fill"] == 1
 
 
+def test_weeks_with_few_reviews_count_too(conn):
+    add_full_week(conn, SEP_7, 1)
+    add_review(conn, 50, created_at=monday(SEP_14, 12))  # 1 review: maybe only part of the week is stored
+    add_full_week(conn, SEP_21, 100)
+    assert gaps.weeks_to_fill(conn, 620, TODAY) == [SEP_14]
+
+
+def test_the_current_week_is_left_alone(conn):
+    add_full_week(conn, SEP_28, 1)
+    add_review(conn, 50, created_at=monday(TODAY, 12))  # this week isn't over yet
+    assert gaps.weeks_to_fill(conn, 620, TODAY) == [date(2026, 10, 5)]  # the empty week before it still counts
+
+
 def test_only_weeks_inside_the_stored_range_count(conn):
-    add_review(conn, 1, created_at=monday(SEP_7, 12))
-    add_review(conn, 2, created_at=monday(SEP_14, 12))
-    add_review(conn, 3, app_id=730, created_at=monday(SEP_28, 12))  # another game's reviews don't count
-    assert gaps.empty_weeks(conn, 620) == []
+    add_full_week(conn, SEP_7, 1)
+    add_full_week(conn, SEP_14, 100)
+    add_review(conn, 500, app_id=730, created_at=monday(SEP_28, 12))  # another game's reviews don't count
+    assert gaps.weeks_to_fill(conn, 620, TODAY) == []
 
 
-def test_fill_asks_steam_for_each_empty_week_newest_first(client, conn, fake_steam):
+def test_fill_asks_steam_for_each_week_newest_first(client, conn, fake_steam):
     add_weeks_with_gaps(conn)
     fake_steam.responses = [steam_page([review_in(SEP_21, 500)]), steam_page([review_in(SEP_14, 501)])]
 
@@ -51,7 +77,7 @@ def test_fill_asks_steam_for_each_empty_week_newest_first(client, conn, fake_ste
     assert fake_steam.sleeps == [steam.DELAY_BETWEEN_PAGES]  # a pause between the 2 weeks
     labels = conn.execute("SELECT sentiment_label FROM reviews WHERE recommendation_id IN (500, 501)").fetchall()
     assert len(labels) == 2 and all(label is not None for (label,) in labels)  # scored
-    assert client.get("/games/620/trend").json()["weeks_to_fill"] == 0
+    assert client.get("/games/620/trend").json()["weeks_to_fill"] == 0  # still under 30, but done
 
 
 def test_a_week_steam_has_no_reviews_for_is_not_asked_about_again(client, conn, fake_steam):
@@ -82,7 +108,7 @@ def test_fill_failing_midway_keeps_the_weeks_already_done(client, conn, fake_ste
     assert response.status_code == 502
     assert conn.execute("SELECT week FROM gap_weeks").fetchall() == [(SEP_21,)]
     assert conn.execute("SELECT sentiment_label FROM reviews WHERE recommendation_id = 500").fetchone()[0] is not None
-    assert gaps.empty_weeks(conn, 620) == [SEP_14]
+    assert gaps.weeks_to_fill(conn, 620, TODAY) == [SEP_14]
 
 
 def test_fill_when_steam_rate_limits_midway(client, conn, fake_steam):
@@ -92,7 +118,7 @@ def test_fill_when_steam_rate_limits_midway(client, conn, fake_steam):
     assert response.status_code == 429
     assert response.headers["retry-after"] == "60"
     assert "try again in a minute" in response.json()["detail"]
-    assert gaps.empty_weeks(conn, 620) == [SEP_14]  # the first week is kept for next time
+    assert gaps.weeks_to_fill(conn, 620, TODAY) == [SEP_14]  # the first week is kept for next time
 
 
 def test_fill_notices_when_steam_ignores_the_week(client, conn, fake_steam):
