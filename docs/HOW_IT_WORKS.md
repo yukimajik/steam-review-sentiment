@@ -41,11 +41,14 @@ A learning guide to this project: what each piece does, how data moves through i
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
-| `frontend/src/App.tsx` | The dashboard page: the picked game (name, cover, app ID), loading its data, the fetch button, and which state to show (loading, not stored, error, ready). |
+| `frontend/src/App.tsx` | The page: the masthead with the search (large on the start page, a bar once a game is picked), loading the game's data, the fetch button, and which state to show (loading, not stored, error, ready). |
+| `frontend/src/main.tsx` | Starts React and loads the two self-hosted fonts and the stylesheet. |
+| `frontend/src/fonts.d.ts` | One line telling TypeScript that the Big Shoulders font package can be imported (it ships CSS only, without type declarations). |
 | `frontend/src/api.ts` | Calls the API, mirrors its response shapes as TypeScript types, and turns failures into messages a person can act on. |
 | `frontend/src/format.ts` | Number, date and score formatting, sentiment colors and labels, topic names, and stripping Steam's formatting tags for display. |
-| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `SummaryCards`, `SentimentPie`, `TrendChart`, `TopicBreakdown` (the topic chart and example excerpts), `UpdateShifts` (before/after numbers around updates, and the button that fetches their reviews), `ReviewList`: one file per part of the page. |
-| `frontend/src/index.css` | All styling: color tokens, layout, and the phone/tablet/desktop breakpoints. |
+| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `GameHero` (the game's cover, name and Steam link at the top of its dashboard, plus the small split-ring logo), `SentimentSplit` (the sentiment donut with the negative and positive shares on either side, and the model-agreement bar), `TrendChart`, `TopicBreakdown` (the topic chart and example excerpts), `UpdateShifts` (before/after numbers around updates, and the button that fetches their reviews), `ReviewList`: one file per part of the page. |
+| `frontend/src/index.css` | All styling: color, type and surface tokens, the layout, the donut's load animation, and the phone/tablet/desktop breakpoints. |
+| `frontend/public/favicon.svg` | The browser-tab icon: the same split ring as the logo. |
 | `frontend/package.json` | Frontend dependencies (React, Recharts, Vite, TypeScript, Oxlint) and scripts (`dev`, `build`, `lint`). |
 
 ### The `reviews` table
@@ -119,10 +122,10 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 ### In the browser
 
 1. You type part of a game's name. `GameSearch` waits until you pause typing (300 ms) and calls `/search` (described in the next section). It shows up to 10 matches with covers. Picking one hands its app ID, name and cover to `App`.
-2. `App` calls `/summary`, `/trend`, `/topics` and `/updates` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
+2. The title and search shrink into a bar at the top, and the game's header (cover, name, Steam link) appears right away. `App` calls `/summary`, `/trend`, `/topics` and `/updates` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
 3. **404** means the game isn't stored. The page offers "Fetch reviews from Steam", which calls `POST /fetch?max_reviews=1000`. In a real run that took 12.8 seconds, then the dashboard loaded.
 4. **Any other error** shows a message saying what to do (start the API, start the database, try again later) with a "Try again" button.
-5. **Success** draws the summary cards, the pie, the weekly line chart with update markers, the update section and the topic section. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment.
+5. **Success** draws the sentiment donut and model agreement in the game's header, then the weekly line chart with update markers, the update section and the topic section. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment.
 6. **The update section** offers "Find updates", or "Fetch reviews around N updates" with an estimated time. While it runs it shows "update 2 of 5", pauses for a minute if Steam rate limits, and reloads the dashboard when done. Picking another game stops it.
 7. **The topic section** starts on the most-mentioned topic. Clicking a bar or a topic button shows that topic's praise and complaint excerpts.
 8. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
@@ -250,8 +253,20 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 |---|---|---|
 | **Vite + React + TypeScript** | Vite starts instantly and reloads on save; TypeScript catches mistakes like a misspelled API field at build time | Create React App (no longer maintained); Next.js (server rendering we don't need); plain JavaScript |
 | **Recharts** | Declarative React components for charts, with tooltips and responsive sizing built in | Chart.js (not React-native); D3 (full control, much more code) |
-| **Blue / gray / red for positive / neutral / negative** | Sentiment is an *ordered* scale, so it gets a diverging palette: opposite poles plus a neutral midpoint. Checked with a script, not by eye: worst colorblind separation ΔE 8.7 (target ≥ 8), every color ≥ 3:1 contrast | Green/red (the classic pair red-green colorblind readers can't separate); three unrelated hues (hides the order) |
-| **Legend with values next to the pie, data table under the line chart** | Every number is readable without hovering, and identity never relies on color alone | Tooltips only (hidden on touch screens and to screen readers) |
+| **One idea behind the look: "the split"** | Every Steam review is a vote one way or the other, so negative always sits on the left and positive on the right: the donut's two sides, the topic chart, the complaint and praise examples, the update drops and rises, and the review filters. A reader learns the layout once | A generic dashboard (same-looking cards, system font), which is what the first version was |
+| **Vermilion / gray / cobalt for negative / neutral / positive** | Sentiment is an *ordered* scale, so it gets a diverging palette: opposite poles plus a gray midpoint. Checked with a script, not by eye: worst colorblind separation ΔE 12.0 under deuteranopia (target ≥ 8), every color ≥ 3:1 contrast on both background colors. Errors use a separate deep red, so an error never looks like a sentiment | Green/red (the classic pair red-green colorblind readers can't separate); the earlier blue/red (ΔE 8.7, fine, but generic) |
+| **Concrete-gray page, chalk panels, ink text** | The panels stand out from the page by brightness instead of shadows, so the page feels full without boxes and drop shadows everywhere. All text passes WCAG AA: 4.6:1 or more for the lightest gray. A faint grain makes the background read as a material | White cards on near-white (the first version, which looked empty); a dark theme (closer to Steam's own look, and long reviews are harder to read) |
+| **Two typefaces: Big Shoulders for headings and big numbers, Atkinson Hyperlegible Next for everything else** | Big Shoulders is tall and narrow, so "46.2%" can be very large on both sides of the donut and still fit on a phone. Atkinson was designed by the Braille Institute for legibility; it tells 0 from O and 1 from l, which matters for scores like +0.311. Measured in the browser: it has fixed-width digits for tables | The system font (the first version); Inter or Roboto (seen everywhere) |
+| **Fonts self-hosted from npm (`@fontsource-variable`)** | Bundled with the app: no request to Google, works offline, version pinned | A Google Fonts `<link>` (an outside request on every visit) |
+| **Donut drawn as hand-written SVG, not Recharts** | So positive can run clockwise and negative counterclockwise from 12 o'clock and meet at a seam at the top; the bigger side shows which way the game leans. Each slice is a path with `pathLength=100`, so CSS can draw it from its start | Recharts' `Pie` (draws every slice in one direction from one start angle) |
+| **The numbers sit beside the donut, with the total in the middle** | Every value is readable without hovering, and identity never relies on color alone (each number has a label and a dot). Hovering a slice or a number fades the others and puts that share in the middle | A separate legend under the chart (the first version) |
+| **One animation: the donut grows out of the seam when a game loads** | A single moment draws the eye to the main result; nothing else moves on its own. Turned off for people whose system asks for reduced motion | Fading in every section (busy, and a common template look); no animation |
+| **Model agreement as a bar with a tick for the baseline** | Shows at a glance that 69.8% only beats always guessing the more common vote (67.4%) by a little, which is the honest reading | The number alone, as before |
+| **The game's cover, blurred, behind its header** | Each game's page takes on a little of its own colors (PAYDAY 3 gray, Overwatch warm pink, Hades II green) with no extra data | A fixed decorative background |
+| **`overflow: clip` on the header** | The blurred cover reaches past the edges. With `overflow: hidden` the header could still be scrolled sideways, and in testing it ended up shifted 40 px left. `clip` can't scroll | `overflow: hidden` |
+| **Sections with a heading column on wide screens** | Each section has a long note on how to read it; a 220 px column beside the chart holds it, and stays in view (`position: sticky`) while a long section like the review list scrolls past. On phones it stacks above | Heading and note above every chart (pushes charts down) |
+| **Weekly chart: line in ink, faint cobalt above zero and vermilion below** | A single line has no "side", so it's drawn in ink; the tints and their labels ("Leans Recommended" / "Leans Not recommended") say what each half means | A blue line (blue now means positive) |
+| **Data tables under the charts** | Every number is readable without hovering | Tooltips only (hidden on touch screens and to screen readers) |
 | **Line chart's y-axis fixed at −1 to +1, with a line at 0** | Shows where sentiment really sits on the model's scale. A zoomed-in axis would make a 0.35 → 0.38 wobble look dramatic | Auto-scaled axis |
 | **Plain CSS with variables, no UI library** | Small, readable, nothing to learn beyond CSS; colors defined once | Tailwind; a component library like MUI |
 | **Results tagged with the request they answer** | "Loading" is derived (latest result isn't for the current request), and a slow old response can never overwrite a newer one | Setting a `loading` flag inside the effect (an extra render, and the linter warns about it) |
@@ -267,10 +282,10 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Search disabled during a fetch** | The fetch result can't land on a different game than the one shown | Allowing it and tracking which game each fetch belongs to |
 | **Steam's formatting tags stripped for display** | `[spoiler]...[/spoiler]` showed up on the first page of Portal 2 reviews; same tag list the scorer uses | Show raw text; render the formatting (more code, and spoilers would need a reveal button) |
 | **Frontend runs with `npm run dev`, not in Docker yet** | Instant reloads while building; it can join Compose later | An nginx container serving the built files |
-| **Topic chart: horizontal bars, complaints left in red and praise right in blue, as a share of all reviews** | Answers "what do players like and complain about most" in one view. Both sides use the same scale so they compare fairly, and topics are sorted by how often they come up | Stacked 100% bars per topic (hide how often a topic comes up); two separate charts (harder to compare a topic's two sides) |
+| **Topic chart: horizontal bars, complaints left in vermilion and praise right in cobalt, as a share of all reviews** | Answers "what do players like and complain about most" in one view. Both sides use the same scale so they compare fairly, and topics are sorted by how often they come up | Stacked 100% bars per topic (hide how often a topic comes up); two separate charts (harder to compare a topic's two sides) |
 | **Pick a topic by clicking its bar or a topic button** | Bars are quick with a mouse; the buttons also work with a keyboard and screen readers, and show which topic is selected. The selected topic's bars stay solid and the rest fade | A dropdown; a separate topic filter on the review list (all matching reviews with paging, but another filter to manage) |
 | **Topics loaded with the summary and trend in one `Promise.all`** | One loading state for the whole dashboard; the data doesn't change while you look at it | Loading inside the component like `ReviewList` (its own spinner and error, but more code) |
-| **One 648 kB bundle (190 kB gzipped), mostly Recharts** | Fine for a local dashboard | Load the charts separately with `import()` to make first paint faster |
+| **One 637 kB bundle (188 kB gzipped), mostly Recharts** | Fine for a local dashboard. The redesign made it 11 kB smaller (648 kB before), because the donut no longer uses Recharts. The fonts are separate files: a page downloads the two Latin ones, 69.5 kB together; the extra character sets load only if a review needs them | Load the charts separately with `import()` to make first paint faster |
 
 ---
 
@@ -330,7 +345,9 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 
 **Race conditions.** If you search 620 and then quickly 949230, the 620 answer might arrive last. The page cancels old requests (`AbortController`) and tags results with the request they answer, so the old answer is never shown.
 
-**Responsive design.** One layout that adapts. Below 640px everything is one column, at 640px the cards go side by side, at 900px the two charts sit side by side. Checked at 375px (phone), 768px (tablet) and 1280px (desktop) with no sideways scrolling.
+**Responsive design.** One layout that adapts. Below 640px everything is one column, at 640px the example and update columns go side by side, at 960px model agreement moves beside the donut, and at 1000px each section gets its heading column. The redesign was checked at 375px (phone), 1024px, 1280px and 1440px with no sideways scrolling.
+
+**Design tokens.** Named values for colors, fonts and surfaces (`--ground`, `--panel`, `--ink`, `--sentiment-positive`…) defined once at the top of `index.css` and used everywhere, including inside the charts. Changing a color means changing one line, and the chart colors can't drift from the rest of the page.
 
 **Held-out test set and data leakage.** You test a model on examples it never trained on. Otherwise you're grading it on answers it has memorized. Here the held-out examples are whole games, so game-specific words can't leak from training into the test.
 
@@ -591,13 +608,21 @@ Every failure becomes a message that says what to do. The API client (`api.ts`) 
 Each message has a "Try again" button. Bad input is caught before any request. I tested each case against the real stack by stopping the API container and the database container while the page was open.
 
 **How did you make sure it works on phones?**
-The CSS is mobile-first: one column by default, with wider layouts added at 640px and 900px. Charts use Recharts' `ResponsiveContainer` to fill whatever width they get. I checked it in a browser at 375px, 768px and 1280px, including a script confirming the page is never wider than the screen. That check caught the sentiment filter chips running off a phone screen; they now wrap.
+The CSS is mobile-first: one column by default, with wider layouts added at 640px, 960px and 1000px. Charts use Recharts' `ResponsiveContainer` to fill whatever width they get. I checked it in a browser at 375px, 768px and 1280px, including a script confirming the page is never wider than the screen. That check caught the sentiment filter chips running off a phone screen; they now wrap.
 
 **Why a pie chart if they're often criticized?**
-The requirement was a pie, and with only three slices showing part of a whole it reads fine. To make it accessible:
-- The colors follow the scale's order (blue = positive, gray = neutral, red = negative) and were validated for colorblind separation.
-- 2px gaps separate the slices.
-- A legend with exact percentages sits right next to it, so nobody has to judge angles.
+The requirement was a pie, and with only three slices showing part of a whole it reads fine. It's a donut now, arranged to make one comparison easy:
+- Positive runs clockwise from 12 o'clock and negative counterclockwise, so they meet at a seam at the top and the bigger side shows which way the game leans. Neutral fills the bottom.
+- The colors follow the scale's order (cobalt = positive, gray = neutral, vermilion = negative) and were validated for colorblind separation.
+- Gaps separate the slices.
+- The exact percentages sit right beside it in large type, so nobody has to judge angles.
+
+**How did you approach the redesign?**
+1. **I looked at what was there:** a clean but generic page of identical white cards, a system font and a basic pie.
+2. **I picked one idea from the subject:** every review is a vote, so negative goes left and positive goes right everywhere. That one rule drives the donut, the topic chart, the example columns, the update lists and the filter order.
+3. **I kept the boldness in one place:** the hero with the donut and big numbers. Everything below is quieter.
+4. **I checked the parts that can be measured:** the colors with a colorblindness script, text contrast with the WCAG formula, and the fonts' fixed-width digits in the browser.
+5. **I tested every state in the browser:** the start page, loading (by pausing the API container), not stored, an error (by stopping it), a loaded game, phone width and keyboard focus. That's how I found the header shifting sideways, which `overflow: clip` fixed.
 
 **How did you decide which sentiment model to use?**
 I measured instead of guessing.

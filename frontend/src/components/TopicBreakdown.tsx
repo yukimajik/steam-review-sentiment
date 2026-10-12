@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import {
   Bar, BarChart, CartesianGrid, Rectangle, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
   type BarShapeProps, type TooltipContentProps,
@@ -23,12 +23,16 @@ export function TopicBreakdown({ data }: { data: Topics }) {
 
   if (!shown) {
     return (
-      <section className="card topics">
-        <h3>What players talk about</h3>
-        <p className="empty">
-          None of these reviews mention the topics tracked here: performance, bugs, price, story, gameplay, graphics,
-          multiplayer and content.
-        </p>
+      <section className="section">
+        <div className="section-head">
+          <h3>What players talk about</h3>
+        </div>
+        <div className="section-body">
+          <p className="empty">
+            None of these reviews mention the topics tracked here: performance, bugs, price, story, gameplay, graphics,
+            multiplayer and content.
+          </p>
+        </div>
       </section>
     )
   }
@@ -60,88 +64,93 @@ export function TopicBreakdown({ data }: { data: Topics }) {
   const select = (bar: { payload?: Row }) => bar.payload && setSelected(bar.payload.topic)
 
   return (
-    <section className="card topics">
-      <h3>What players talk about</h3>
-      <p className="chart-note">
-        Share of all {formatCount(data.total_reviews)} reviews that praise or complain about each topic, most mentioned
-        first. Click a bar or a topic below to see examples.
-      </p>
-      <ul className="topic-legend">
-        <li><span className="swatch" style={{ background: SENTIMENT_COLORS.negative }} /> Complaints</li>
-        <li><span className="swatch" style={{ background: SENTIMENT_COLORS.positive }} /> Praise</li>
-      </ul>
-      <div className="topics-chart" role="img" aria-label={description}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} layout="vertical" stackOffset="sign" margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
-            <CartesianGrid horizontal={false} stroke="var(--grid)" />
-            <XAxis
-              type="number"
-              domain={[-limit, limit]}
-              ticks={[-limit, -limit / 2, 0, limit / 2, limit]}
-              tickFormatter={(value: number) => `${Math.abs(value)}%`}
-              stroke="var(--axis)"
-              tick={{ fill: 'var(--text-muted)', fontSize: 12 }}
-              tickLine={false}
-            />
-            <YAxis
-              type="category"
-              dataKey="label"
-              width={140}
-              stroke="var(--axis)"
-              tick={{ fill: 'var(--text-secondary)', fontSize: 12 }}
-              tickLine={false}
-              axisLine={false}
-            />
-            <ReferenceLine x={0} stroke="var(--axis)" />
-            <Tooltip content={TopicTooltip} cursor={{ fill: 'var(--grid)', fillOpacity: 0.5 }} />
-            <Bar dataKey="complaintPct" stackId="topic" fill={SENTIMENT_COLORS.negative} shape={renderBar}
-              onClick={select} cursor="pointer" isAnimationActive={false} />
-            <Bar dataKey="praisePct" stackId="topic" fill={SENTIMENT_COLORS.positive} shape={renderBar}
-              onClick={select} cursor="pointer" isAnimationActive={false} />
-          </BarChart>
-        </ResponsiveContainer>
+    <section className="section">
+      <div className="section-head">
+        <h3>What players talk about</h3>
+        <p className="note">
+          Share of all {formatCount(data.total_reviews)} reviews that praise or complain about each topic, most
+          mentioned first. Click a bar or a topic below to see examples.
+        </p>
       </div>
-
-      <details className="data-table">
-        <summary>Show data table</summary>
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Topic</th><th scope="col">Mentions</th><th scope="col">Praise</th>
-              <th scope="col">Neutral</th><th scope="col">Complaints</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.topics.map((t) => (
-              <tr key={t.topic}>
-                <td>{TOPIC_LABELS[t.topic]}</td>
-                <td>{formatCount(t.mentions)}</td>
-                <td>{formatCount(t.positive)}</td>
-                <td>{formatCount(t.neutral)}</td>
-                <td>{formatCount(t.negative)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
-
-      <div className="filters" role="group" aria-label="Show examples for a topic">
-        {data.topics.map((t) => (
-          <button key={t.topic} type="button" className="filter" aria-pressed={t.topic === shown.topic}
-            onClick={() => setSelected(t.topic)}>
-            {TOPIC_LABELS[t.topic]}
-          </button>
-        ))}
-      </div>
-
-      {shown.mentions === 0 ? (
-        <p className="empty">No reviews mention {TOPIC_LABELS[shown.topic].toLowerCase()}.</p>
-      ) : (
-        <div className="topic-examples">
-          <ExampleColumn kind="praise" topic={shown.topic} count={shown.positive} examples={shown.praise} />
-          <ExampleColumn kind="complaints" topic={shown.topic} count={shown.negative} examples={shown.complaints} />
+      <div className="section-body">
+        <ul className="topic-legend">
+          <li><span className="swatch" style={{ background: SENTIMENT_COLORS.negative }} /> Complaints</li>
+          <li><span className="swatch" style={{ background: SENTIMENT_COLORS.positive }} /> Praise</li>
+        </ul>
+        <div className="topics-chart" role="img" aria-label={description}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} layout="vertical" stackOffset="sign" margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
+              <CartesianGrid horizontal={false} stroke="var(--grid)" />
+              <XAxis
+                type="number"
+                domain={[-limit, limit]}
+                ticks={[-limit, -limit / 2, 0, limit / 2, limit]}
+                tickFormatter={(value: number) => `${Math.abs(value)}%`}
+                stroke="var(--axis)"
+                tick={{ fill: 'var(--ink-3)', fontSize: 12 }}
+                tickLine={false}
+              />
+              <YAxis
+                type="category"
+                dataKey="label"
+                width={140}
+                stroke="var(--axis)"
+                tick={{ fill: 'var(--ink-2)', fontSize: 13 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <ReferenceLine x={0} stroke="var(--ink)" strokeOpacity={0.5} />
+              <Tooltip content={TopicTooltip} cursor={{ fill: 'var(--grid)', fillOpacity: 0.5 }} />
+              <Bar dataKey="complaintPct" stackId="topic" fill={SENTIMENT_COLORS.negative} shape={renderBar}
+                radius={[4, 0, 0, 4]} onClick={select} cursor="pointer" isAnimationActive={false} />
+              <Bar dataKey="praisePct" stackId="topic" fill={SENTIMENT_COLORS.positive} shape={renderBar}
+                radius={[0, 4, 4, 0]} onClick={select} cursor="pointer" isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
-      )}
+
+        <details className="data-table">
+          <summary>Show data table</summary>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Topic</th><th scope="col">Mentions</th><th scope="col">Praise</th>
+                <th scope="col">Neutral</th><th scope="col">Complaints</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.topics.map((t) => (
+                <tr key={t.topic}>
+                  <td>{TOPIC_LABELS[t.topic]}</td>
+                  <td>{formatCount(t.mentions)}</td>
+                  <td>{formatCount(t.positive)}</td>
+                  <td>{formatCount(t.neutral)}</td>
+                  <td>{formatCount(t.negative)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+
+        <div className="filters" role="group" aria-label="Show examples for a topic">
+          {data.topics.map((t) => (
+            <button key={t.topic} type="button" className="filter" aria-pressed={t.topic === shown.topic}
+              onClick={() => setSelected(t.topic)}>
+              {TOPIC_LABELS[t.topic]}
+            </button>
+          ))}
+        </div>
+
+        {shown.mentions === 0 ? (
+          <p className="empty">No reviews mention {TOPIC_LABELS[shown.topic].toLowerCase()}.</p>
+        ) : (
+          // Complaints on the left and praise on the right, matching the chart
+          <div className="topic-examples">
+            <ExampleColumn kind="complaints" topic={shown.topic} count={shown.negative} examples={shown.complaints} />
+            <ExampleColumn kind="praise" topic={shown.topic} count={shown.positive} examples={shown.praise} />
+          </div>
+        )}
+      </div>
     </section>
   )
 }
@@ -163,7 +172,7 @@ function ExampleColumn({ kind, topic, count, examples }: {
       {examples.length === 0 ? (
         <p className="empty">No {kind} about {TOPIC_LABELS[topic].toLowerCase()} in these reviews.</p>
       ) : (
-        <ul className="excerpts">
+        <ul className="excerpts" style={{ '--mark': color } as CSSProperties}>
           {examples.map((example) => (
             // Keyed by topic too, so an expanded excerpt collapses when another topic is picked
             <Excerpt key={`${topic}-${example.recommendation_id}`} example={example} />

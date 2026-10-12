@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { ApiError, getReviews, isAbort, type ReviewPage, type Review, type Sentiment } from '../api'
 import {
   formatCount, formatDate, formatPlaytime, formatScore, SENTIMENT_COLORS, SENTIMENT_LABELS, stripFormatting,
 } from '../format'
 
 const PAGE_SIZE = 10
+// Negative before positive, matching the left-to-right order used everywhere else
 const FILTERS: { value: Sentiment | null; label: string }[] = [
   { value: null, label: 'All' },
-  { value: 'positive', label: 'Positive' },
-  { value: 'neutral', label: 'Neutral' },
   { value: 'negative', label: 'Negative' },
+  { value: 'neutral', label: 'Neutral' },
+  { value: 'positive', label: 'Positive' },
 ]
 
 // Rendered with key={appId}, so searching another game starts fresh (filter and page reset).
@@ -50,58 +51,59 @@ export function ReviewList({ appId }: { appId: number }) {
   const filterName = shownSentiment ? SENTIMENT_LABELS[shownSentiment].toLowerCase() + ' ' : ''
 
   return (
-    <section className="card reviews">
-      <div className="reviews-header">
+    <section className="section">
+      <div className="section-head">
         <h3>Reviews</h3>
-        {data && <p className="reviews-count">{formatCount(data.total)} {filterName}reviews</p>}
-      </div>
-
-      <div className="filters" role="group" aria-label="Filter reviews by sentiment">
-        {FILTERS.map((filter) => (
-          <button
-            key={filter.label}
-            type="button"
-            className="filter"
-            aria-pressed={sentiment === filter.value}
-            onClick={() => chooseFilter(filter.value)}
-          >
-            {filter.value && <span className="dot" style={{ background: SENTIMENT_COLORS[filter.value] }} />}
-            {filter.label}
-          </button>
-        ))}
-      </div>
-
-      {error ? (
-        <div className="notice notice-error" role="alert">
-          <p>{error}</p>
-          <button type="button" className="button-secondary" onClick={() => setRetryCount((n) => n + 1)}>
-            Try again
-          </button>
-        </div>
-      ) : !data ? (
-        <ReviewListSkeleton />
-      ) : data.items.length === 0 ? (
-        <p className="empty">No {filterName}reviews for this game.</p>
-      ) : (
-        // While the next page loads, keep the current one visible but faded (no layout jump)
-        <ol className={loading ? 'review-items is-refreshing' : 'review-items'} aria-busy={loading}>
-          {data.items.map((review) => (
-            <ReviewItem key={review.recommendation_id} review={review} />
+        {data && <p className="note">{formatCount(data.total)} {filterName}reviews</p>}
+        <div className="filters" role="group" aria-label="Filter reviews by sentiment">
+          {FILTERS.map((filter) => (
+            <button
+              key={filter.label}
+              type="button"
+              className="filter"
+              aria-pressed={sentiment === filter.value}
+              onClick={() => chooseFilter(filter.value)}
+            >
+              {filter.value && <span className="dot" style={{ background: SENTIMENT_COLORS[filter.value] }} />}
+              {filter.label}
+            </button>
           ))}
-        </ol>
-      )}
+        </div>
+      </div>
 
-      {data && data.total > PAGE_SIZE && !error && (
-        <nav className="pagination" aria-label="Review pages">
-          <button type="button" className="button-secondary" disabled={page <= 1 || loading} onClick={() => setPage(page - 1)}>
-            Previous
-          </button>
-          <span>Page {formatCount(page)} of {formatCount(totalPages)}</span>
-          <button type="button" className="button-secondary" disabled={page >= totalPages || loading} onClick={() => setPage(page + 1)}>
-            Next
-          </button>
-        </nav>
-      )}
+      <div className="section-body">
+        {error ? (
+          <div className="notice notice-error" role="alert">
+            <p>{error}</p>
+            <button type="button" className="button-secondary" onClick={() => setRetryCount((n) => n + 1)}>
+              Try again
+            </button>
+          </div>
+        ) : !data ? (
+          <ReviewListSkeleton />
+        ) : data.items.length === 0 ? (
+          <p className="empty">No {filterName}reviews for this game.</p>
+        ) : (
+          // While the next page loads, keep the current one visible but faded (no layout jump)
+          <ol className={loading ? 'review-items is-refreshing' : 'review-items'} aria-busy={loading}>
+            {data.items.map((review) => (
+              <ReviewItem key={review.recommendation_id} review={review} />
+            ))}
+          </ol>
+        )}
+
+        {data && data.total > PAGE_SIZE && !error && (
+          <nav className="pagination" aria-label="Review pages">
+            <button type="button" className="button-secondary" disabled={page <= 1 || loading} onClick={() => setPage(page - 1)}>
+              Previous
+            </button>
+            <span>Page {formatCount(page)} of {formatCount(totalPages)}</span>
+            <button type="button" className="button-secondary" disabled={page >= totalPages || loading} onClick={() => setPage(page + 1)}>
+              Next
+            </button>
+          </nav>
+        )}
+      </div>
     </section>
   )
 }
@@ -115,7 +117,7 @@ function ReviewItem({ review }: { review: Review }) {
   const playtime = formatPlaytime(review.playtime_at_review_minutes)
 
   return (
-    <li className="review">
+    <li className="review" style={{ '--mark': SENTIMENT_COLORS[review.sentiment_label] } as CSSProperties}>
       <div className="review-meta">
         <span className="chip">
           <span className="dot" style={{ background: SENTIMENT_COLORS[review.sentiment_label] }} />
