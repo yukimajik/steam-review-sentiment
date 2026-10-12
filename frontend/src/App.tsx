@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  ApiError, fetchFromSteam, getSummary, getTopics, getTrend, getUpdates, isAbort, type SearchResult, type Summary,
-  type Topics, type Trend, type Updates,
+  ApiError, fetchFromSteam, getPlaytime, getSummary, getTopics, getTrend, getUpdates, isAbort, type Playtime,
+  type SearchResult, type Summary, type Topics, type Trend, type Updates,
 } from './api'
 import { GameHero, SplitMark } from './components/GameHero'
 import { GameSearch } from './components/GameSearch'
+import { PlaytimeBreakdown } from './components/PlaytimeBreakdown'
 import { ReviewList } from './components/ReviewList'
 import { SentimentSplit, SentimentSplitSkeleton } from './components/SentimentSplit'
 import { TopicBreakdown } from './components/TopicBreakdown'
@@ -18,7 +19,7 @@ const SLOW_LOAD_MS = 5000 // after this long, explain that the server may be wak
 // The outcome of loading one game. `key` says which request it answers, so a result
 // for an older request is never shown as the current one.
 type Loaded = { key: string } & (
-  | { status: 'ready'; summary: Summary; trend: Trend; topics: Topics; updates: Updates }
+  | { status: 'ready'; summary: Summary; trend: Trend; topics: Topics; updates: Updates; playtime: Playtime }
   | { status: 'not-stored' } // the API has no reviews for this game yet
   | { status: 'error'; message: string }
 )
@@ -40,8 +41,12 @@ export default function App() {
     const key = `${appId}-${reloadKey}`
     const controller = new AbortController() // a newer search cancels this one
     const { signal } = controller
-    Promise.all([getSummary(appId, signal), getTrend(appId, signal), getTopics(appId, signal), getUpdates(appId, signal)])
-      .then(([summary, trend, topics, updates]) => setLoaded({ key, status: 'ready', summary, trend, topics, updates }))
+    Promise.all([
+      getSummary(appId, signal), getTrend(appId, signal), getTopics(appId, signal), getUpdates(appId, signal),
+      getPlaytime(appId, signal),
+    ])
+      .then(([summary, trend, topics, updates, playtime]) =>
+        setLoaded({ key, status: 'ready', summary, trend, topics, updates, playtime }))
       .catch((error) => {
         if (isAbort(error)) return
         if (error instanceof ApiError && error.status === 404) {
@@ -101,7 +106,8 @@ export default function App() {
         {game === null || appId === null ? (
           <p className="intro">
             Pick a game to see how its reviews split between positive and negative, how that changed week by week and
-            around updates, what players praise and complain about, and the reviews behind it.
+            around updates, how it differs by playtime, what players praise and complain about, and the reviews behind
+            it.
           </p>
         ) : (
           <>
@@ -120,6 +126,7 @@ export default function App() {
                   </p>
                 )}
                 <ChartSkeleton title="Average sentiment by week" />
+                <ChartSkeleton title="Playtime at review" />
                 <ChartSkeleton title="Sentiment around updates" />
                 <ChartSkeleton title="What players talk about" />
               </div>
@@ -159,6 +166,7 @@ export default function App() {
                   weeks={dashboard.trend.weeks}
                   updateTimes={dashboard.updates.updates.map((u) => Date.parse(u.posts[0].posted_at))}
                 />
+                <PlaytimeBreakdown data={dashboard.playtime} />
                 <UpdateShifts
                   key={`updates-${appId}`}
                   appId={appId}

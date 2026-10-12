@@ -192,6 +192,38 @@ def test_topics_unknown_game_returns_404(client):
     assert client.get("/games/620/topics").status_code == 404
 
 
+# ---------- GET /games/{app_id}/playtime ----------
+
+def test_playtime_groups(client, conn):
+    review_id = iter(range(1, 100))
+    # Under 2 h: 30 reviews at 119 minutes (just under the boundary), 10 of them Recommended
+    for i in range(30):
+        recommended = i < 10
+        add_review(conn, next(review_id), playtime=119, voted_up=recommended, compound=0.5 if recommended else -0.5)
+    # 2-10 h: 3 reviews at exactly 120 minutes, 2 Recommended: too few for percentages
+    for recommended in (True, True, False):
+        add_review(conn, next(review_id), playtime=120, voted_up=recommended)
+    add_review(conn, next(review_id), playtime=3000)  # exactly 50 h: in the 50 h+ group
+    add_review(conn, next(review_id), playtime=None)  # Steam sent no playtime
+    add_review(conn, next(review_id), app_id=400, playtime=30)  # another game: not counted
+
+    body = client.get("/games/620/playtime").json()
+
+    assert body["total_reviews"] == 35
+    assert body["min_reviews"] == 30
+    assert body["unknown_playtime"] == 1
+    assert body["groups"] == [
+        {"group": "under_2h", "reviews": 30, "recommended": 10, "recommended_pct": 33.3, "avg_score": -0.167},
+        {"group": "2_to_10h", "reviews": 3, "recommended": 2, "recommended_pct": None, "avg_score": None},
+        {"group": "10_to_50h", "reviews": 0, "recommended": 0, "recommended_pct": None, "avg_score": None},
+        {"group": "50h_plus", "reviews": 1, "recommended": 1, "recommended_pct": None, "avg_score": None},
+    ]
+
+
+def test_playtime_unknown_game_returns_404(client):
+    assert client.get("/games/620/playtime").status_code == 404
+
+
 # ---------- GET /games/{app_id}/reviews ----------
 
 def test_reviews_are_paginated_newest_first(client, conn):
@@ -222,6 +254,21 @@ def test_reviews_sentiment_filter(client, conn):
     assert review_2["sentiment_compound"] == pytest.approx(-0.6)
 
 
+def test_reviews_playtime_filter(client, conn):
+    add_review(conn, 1, playtime=30)
+    add_review(conn, 2, playtime=119, label="negative", compound=-0.5)
+    add_review(conn, 3, playtime=120)  # 2-10 h
+    add_review(conn, 4, playtime=None)  # no playtime: in no group
+
+    under_2h = client.get("/games/620/reviews?playtime=under_2h").json()
+    negative_under_2h = client.get("/games/620/reviews?playtime=under_2h&sentiment=negative").json()
+    over_50h = client.get("/games/620/reviews?playtime=50h_plus").json()
+
+    assert {r["recommendation_id"] for r in under_2h["items"]} == {1, 2}
+    assert [r["recommendation_id"] for r in negative_under_2h["items"]] == [2]
+    assert over_50h["total"] == 0
+
+
 def test_reviews_filter_with_no_matches_is_empty_not_404(client, conn):
     add_review(conn, 1, label="positive")
     response = client.get("/games/620/reviews?sentiment=negative")
@@ -229,7 +276,7 @@ def test_reviews_filter_with_no_matches_is_empty_not_404(client, conn):
     assert response.json()["items"] == []
 
 
-@pytest.mark.parametrize("query", ["sentiment=angry", "page=0", "page_size=0", "page_size=101"])
+@pytest.mark.parametrize("query", ["sentiment=angry", "playtime=forever", "page=0", "page_size=0", "page_size=101"])
 def test_reviews_reject_bad_input(client, conn, query):
     add_review(conn, 1)
     assert client.get(f"/games/620/reviews?{query}").status_code == 422

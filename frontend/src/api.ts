@@ -92,6 +92,24 @@ export interface Topics {
   topics: TopicSummary[] // every topic, most mentioned first
 }
 
+export type PlaytimeGroup = 'under_2h' | '2_to_10h' | '10_to_50h' | '50h_plus'
+
+export interface PlaytimeGroupStats {
+  group: PlaytimeGroup
+  reviews: number
+  recommended: number // how many of them voted Recommended
+  recommended_pct: number | null // null when the group has fewer than min_reviews: too few to compare
+  avg_score: number | null // average model score, -1 to +1; null likewise
+}
+
+export interface Playtime {
+  app_id: number
+  total_reviews: number
+  min_reviews: number // a group needs this many for its percentages
+  unknown_playtime: number // reviews Steam sent without a playtime; they're in no group
+  groups: PlaytimeGroupStats[] // always all four, shortest playtime first
+}
+
 export interface Review {
   recommendation_id: number
   review_text: string
@@ -188,6 +206,10 @@ export function getTopics(appId: number, signal?: AbortSignal) {
   return request<Topics>(`/games/${appId}/topics`, { signal })
 }
 
+export function getPlaytime(appId: number, signal?: AbortSignal) {
+  return request<Playtime>(`/games/${appId}/playtime`, { signal })
+}
+
 export function getUpdates(appId: number, signal?: AbortSignal) {
   return request<Updates>(`/games/${appId}/updates`, { signal })
 }
@@ -197,9 +219,13 @@ export function fetchUpdateReviews(appId: number, signal?: AbortSignal) {
   return request<UpdateFetchResult>(`/games/${appId}/updates/fetch`, { method: 'POST', signal })
 }
 
-export function getReviews(appId: number, sentiment: Sentiment | null, page: number, pageSize: number, signal?: AbortSignal) {
+export function getReviews(
+  appId: number, sentiment: Sentiment | null, playtime: PlaytimeGroup | null, page: number, pageSize: number,
+  signal?: AbortSignal,
+) {
   const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
   if (sentiment) params.set('sentiment', sentiment)
+  if (playtime) params.set('playtime', playtime)
   return request<ReviewPage>(`/games/${appId}/reviews?${params}`, { signal })
 }
 

@@ -1,7 +1,8 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { ApiError, getReviews, isAbort, type ReviewPage, type Review, type Sentiment } from '../api'
+import { ApiError, getReviews, isAbort, type PlaytimeGroup, type ReviewPage, type Review, type Sentiment } from '../api'
 import {
-  formatCount, formatDate, formatPlaytime, formatScore, SENTIMENT_COLORS, SENTIMENT_LABELS, stripFormatting,
+  formatCount, formatDate, formatPlaytime, formatScore, PLAYTIME_LABELS, SENTIMENT_COLORS, SENTIMENT_LABELS,
+  stripFormatting,
 } from '../format'
 
 const PAGE_SIZE = 10
@@ -12,59 +13,88 @@ const FILTERS: { value: Sentiment | null; label: string }[] = [
   { value: 'neutral', label: 'Neutral' },
   { value: 'positive', label: 'Positive' },
 ]
+const PLAYTIME_FILTERS: { value: PlaytimeGroup | null; label: string }[] = [
+  { value: null, label: 'Any' },
+  ...(Object.entries(PLAYTIME_LABELS) as [PlaytimeGroup, string][]).map(([value, label]) => ({ value, label })),
+]
 
-// Rendered with key={appId}, so searching another game starts fresh (filter and page reset).
+// Rendered with key={appId}, so searching another game starts fresh (filters and page reset).
 export function ReviewList({ appId }: { appId: number }) {
   const [sentiment, setSentiment] = useState<Sentiment | null>(null)
+  const [playtime, setPlaytime] = useState<PlaytimeGroup | null>(null)
   const [page, setPage] = useState(1)
   const [retryCount, setRetryCount] = useState(0)
   // Results are tagged with the request they answer, so "loading" is simply
   // "the latest result isn't for the current request yet".
-  const [loaded, setLoaded] = useState<{ key: string; sentiment: Sentiment | null; data: ReviewPage } | null>(null)
+  const [loaded, setLoaded] = useState<{
+    key: string; sentiment: Sentiment | null; playtime: PlaytimeGroup | null; data: ReviewPage
+  } | null>(null)
   const [failed, setFailed] = useState<{ key: string; message: string } | null>(null)
 
-  const requestKey = `${sentiment}-${page}-${retryCount}`
+  const requestKey = `${sentiment}-${playtime}-${page}-${retryCount}`
   const loading = loaded?.key !== requestKey && failed?.key !== requestKey
   const error = failed?.key === requestKey ? failed.message : null
   const data = loaded?.data ?? null // the previous page stays on screen (faded) while the next one loads
 
   useEffect(() => {
-    const key = `${sentiment}-${page}-${retryCount}`
-    const controller = new AbortController() // cancels this request if the filter/page changes first
-    getReviews(appId, sentiment, page, PAGE_SIZE, controller.signal)
-      .then((result) => setLoaded({ key, sentiment, data: result }))
+    const key = `${sentiment}-${playtime}-${page}-${retryCount}`
+    const controller = new AbortController() // cancels this request if a filter or the page changes first
+    getReviews(appId, sentiment, playtime, page, PAGE_SIZE, controller.signal)
+      .then((result) => setLoaded({ key, sentiment, playtime, data: result }))
       .catch((err) => {
         if (isAbort(err)) return
         setFailed({ key, message: err instanceof ApiError ? err.message : 'Could not load reviews.' })
       })
     return () => controller.abort()
-  }, [appId, sentiment, page, retryCount])
+  }, [appId, sentiment, playtime, page, retryCount])
 
-  function chooseFilter(value: Sentiment | null) {
+  function chooseSentiment(value: Sentiment | null) {
     setSentiment(value)
+    setPage(1)
+  }
+
+  function choosePlaytime(value: PlaytimeGroup | null) {
+    setPlaytime(value)
     setPage(1)
   }
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1
   // Describe the reviews on screen, which are for the last loaded filter
   const shownSentiment = loaded?.sentiment ?? null
+  const shownPlaytime = loaded?.playtime ?? null
   const filterName = shownSentiment ? SENTIMENT_LABELS[shownSentiment].toLowerCase() + ' ' : ''
+  const playtimeName = shownPlaytime ? `, ${PLAYTIME_LABELS[shownPlaytime].toLowerCase()} played` : '' // ", under 2 h played"
 
   return (
     <section className="section">
       <div className="section-head">
         <h3>Reviews</h3>
-        {data && <p className="note">{formatCount(data.total)} {filterName}reviews</p>}
-        <div className="filters" role="group" aria-label="Filter reviews by sentiment">
+        {data && <p className="note">{formatCount(data.total)} {filterName}reviews{playtimeName}</p>}
+        <p className="filter-label" id="sentiment-filter-label">Sentiment</p>
+        <div className="filters" role="group" aria-labelledby="sentiment-filter-label">
           {FILTERS.map((filter) => (
             <button
               key={filter.label}
               type="button"
               className="filter"
               aria-pressed={sentiment === filter.value}
-              onClick={() => chooseFilter(filter.value)}
+              onClick={() => chooseSentiment(filter.value)}
             >
               {filter.value && <span className="dot" style={{ background: SENTIMENT_COLORS[filter.value] }} />}
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        <p className="filter-label" id="playtime-filter-label">Playtime at review</p>
+        <div className="filters" role="group" aria-labelledby="playtime-filter-label">
+          {PLAYTIME_FILTERS.map((filter) => (
+            <button
+              key={filter.label}
+              type="button"
+              className="filter"
+              aria-pressed={playtime === filter.value}
+              onClick={() => choosePlaytime(filter.value)}
+            >
               {filter.label}
             </button>
           ))}
@@ -82,7 +112,7 @@ export function ReviewList({ appId }: { appId: number }) {
         ) : !data ? (
           <ReviewListSkeleton />
         ) : data.items.length === 0 ? (
-          <p className="empty">No {filterName}reviews for this game.</p>
+          <p className="empty">No {filterName}reviews{playtimeName || ' for this game'}.</p>
         ) : (
           // While the next page loads, keep the current one visible but faded (no layout jump)
           <ol className={loading ? 'review-items is-refreshing' : 'review-items'} aria-busy={loading}>
