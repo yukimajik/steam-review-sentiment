@@ -8,11 +8,16 @@ import { formatCount, formatDay, formatScore } from '../format'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const WEEK_MS = 7 * DAY_MS
+// A week's average needs this many reviews to join the line; fewer are hollow dots. A single review
+// scored 0 made a cliff in Silksong's chart. Same minimum as the playtime groups and update comparison.
+const MIN_WEEK_REVIEWS = 30
 
 interface Point {
   x: number // the middle of the week, in milliseconds
   week: string
-  avg_compound: number | null // null for a week with no reviews, which breaks the line
+  avg_compound: number | null // null for a week with no reviews
+  solid: number | null // the average, if the week has enough reviews; null breaks the line
+  sparse: number | null // the average, if it has too few; drawn as a hollow dot
   review_count: number
 }
 
@@ -24,14 +29,20 @@ function toPoints(weeks: TrendWeek[]): Point[] {
   const points: Point[] = []
   for (let start = weekStart(weeks[0].week); start <= weekStart(weeks[weeks.length - 1].week); start += WEEK_MS) {
     const week = new Date(start).toISOString().slice(0, 10)
-    const stored = byWeek.get(week)
-    points.push({ x: start + WEEK_MS / 2, week, avg_compound: stored?.avg_compound ?? null, review_count: stored?.review_count ?? 0 })
+    const avg = byWeek.get(week)?.avg_compound ?? null
+    const count = byWeek.get(week)?.review_count ?? 0
+    const enough = count >= MIN_WEEK_REVIEWS
+    points.push({
+      x: start + WEEK_MS / 2, week, avg_compound: avg, review_count: count,
+      solid: enough ? avg : null, sparse: enough ? null : avg,
+    })
   }
   return points
 }
 
 /** Ticks at the start of each month for a long range, otherwise at the start of each week.
-    Recharts drops ticks that would overlap, so narrow screens show fewer. */
+    Month labels are short ("Nov"), with the year only on the first tick and on January, so they
+    fit; Recharts still drops ticks that would overlap, so narrow screens show fewer. */
 function ticksBetween(start: number, end: number): { ticks: number[]; format: (t: number) => string } {
   const date = (t: number, options: Intl.DateTimeFormatOptions) =>
     new Date(t).toLocaleDateString('en-US', { ...options, timeZone: 'UTC' })
@@ -43,7 +54,11 @@ function ticksBetween(start: number, end: number): { ticks: number[]; format: (t
       if (t > end) break
       ticks.push(t)
     }
-    return { ticks, format: (t) => date(t, { month: 'short', year: 'numeric' }) }
+    const format = (t: number) =>
+      t === ticks[0] || new Date(t).getUTCMonth() === 0
+        ? date(t, { month: 'short', year: 'numeric' })
+        : date(t, { month: 'short' })
+    return { ticks, format }
   }
   const ticks: number[] = []
   for (let t = start; t <= end; t += WEEK_MS) ticks.push(t)
@@ -65,11 +80,14 @@ export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks
   const { ticks, format } = ticksBetween(start, end)
   const shownUpdates = updateTimes.filter((t) => t >= start && t <= end)
 
-  // Label only the most recent point; the axis and tooltip carry the rest
+  const hasGaps = points.some((p) => p.review_count === 0)
+  const hasSparse = points.some((p) => p.sparse !== null)
+  // Label only the most recent week on the line; the axis and tooltip carry the rest
+  const lastSolid = points.findLastIndex((p) => p.solid !== null)
   const renderEndLabel = ({ x, y, index }: { x?: number | string; y?: number | string; index?: number }) =>
-    index === points.length - 1 && x != null && y != null ? (
+    index === lastSolid && x != null && y != null ? (
       <text x={Number(x)} y={Number(y) - 12} textAnchor="middle" className="end-label">
-        {formatScore(last.avg_compound)}
+        {formatScore(points[lastSolid].solid!)}
       </text>
     ) : null
 
@@ -81,6 +99,8 @@ export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks
           Model score from −1 (likely Not recommended) to +1 (likely Recommended), by review date
           {shownUpdates.length > 0 && '. Dashed lines mark game updates'}
           {drawn.length > 0 && '. Hatched areas mark periods Steam flagged as off-topic review activity'}.
+          {hasSparse && ` Hollow dots are weeks with fewer than ${MIN_WEEK_REVIEWS} reviews, too few to join the line.`}
+          {hasGaps && ' Gaps are weeks with no stored reviews: older reviews were only fetched around updates.'}
         </p>
       </div>
       <div className="section-body">
@@ -134,12 +154,21 @@ export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks
               <Tooltip content={TrendTooltip} cursor={{ stroke: 'var(--axis)', strokeWidth: 1 }} />
               <Line
                 type="linear"
-                dataKey="avg_compound"
+                dataKey="solid"
                 stroke="var(--ink)"
                 strokeWidth={2}
                 dot={{ r: 3, fill: 'var(--ink)', stroke: 'var(--panel)', strokeWidth: 2 }}
                 activeDot={{ r: 5, fill: 'var(--ink)', stroke: 'var(--panel)', strokeWidth: 2 }}
                 label={renderEndLabel}
+                isAnimationActive={false}
+              />
+              {/* Weeks with too few reviews: dots only, never joined to anything */}
+              <Line
+                type="linear"
+                dataKey="sparse"
+                stroke="none"
+                dot={{ r: 3.5, fill: 'var(--panel)', stroke: 'var(--ink-3)', strokeWidth: 1.5 }}
+                activeDot={{ r: 5, fill: 'var(--panel)', stroke: 'var(--ink-3)', strokeWidth: 2 }}
                 isAnimationActive={false}
               />
             </LineChart>
@@ -221,7 +250,10 @@ function TrendTooltip({ active, payload }: TooltipContentProps) {
       ) : (
         <>
           <strong>{formatScore(point.avg_compound)}</strong>
-          <span>{formatCount(point.review_count)} reviews</span>
+          <span>
+            {formatCount(point.review_count)} {point.review_count === 1 ? 'review' : 'reviews'}
+            {point.review_count < MIN_WEEK_REVIEWS && ', too few to rely on'}
+          </span>
         </>
       )}
     </div>
