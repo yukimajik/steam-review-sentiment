@@ -1,20 +1,33 @@
-/* ---------- Design tokens ---------- */
+/* ---------- Design tokens ----------
+   Light by default, dark when the system asks for it. Each theme has its own values (checked
+   for contrast and colorblind separation), not an automatic inversion. */
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
 
-  /* Surfaces: a concrete-gray page with chalk panels on it */
-  --ground: #e3e5e1;
-  --panel: #f6f7f4;
-  --skeleton: #e4e6e1;
+  /* Surfaces: a pale chalk page, near-white panels raised on hairlines and a soft shadow */
+  --ground: #eef0ec;
+  --panel: #fbfbf9;
+  --skeleton: #e6e8e3;
+  --line: rgba(20, 26, 24, 0.1);   /* hairline borders around panels and under the bar */
+  --guide: rgba(20, 26, 24, 0.07); /* the faint vertical lines down the page edges */
+  --shadow: 0 1px 2px rgba(20, 26, 24, 0.04), 0 18px 40px -20px rgba(20, 26, 24, 0.18);
+  --shadow-pop: 0 16px 40px rgba(20, 26, 24, 0.18); /* dropdowns and tooltips */
+  --art-opacity: 0.38;             /* the game's blurred cover behind its header */
 
-  /* Text. Contrast on --ground / --panel: ink 12.6 / 14.9, ink-2 6.1 / 7.2, ink-3 4.6 / 5.4 */
-  --ink: #1c2321;
-  --ink-2: #4c5551;
-  --ink-3: #5f6763;
-  --rule: rgba(28, 35, 33, 0.14);
-  --grid: #dfe1dc;
-  --axis: #b7bbb5;
+  /* Text: ink for what matters, muted for everything that explains it.
+     Contrast on --ground / --panel: ink 15.4 / 17.0, ink-2 5.9 / 6.6, ink-3 4.8 / 5.3 */
+  --ink: #141a18;
+  --ink-2: #545d59;
+  --ink-3: #636b67;
+  --rule: var(--line);
+  --grid: #e3e5e0;
+  --axis: #b9bdb7;
   --critical: #b42318; /* errors only, never a sentiment */
+  --on-ink: var(--panel); /* text on an ink-filled button or chip */
+  --tooltip-bg: #141a18;
+  --tooltip-ink: #fbfbf9;
+  --tooltip-ink-2: #c3c9c5;
+  --search-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23545d59' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='m20 20-4.2-4.2'/%3E%3C/svg%3E");
 
   /* Sentiment is an ordered scale: two poles and a gray midpoint. Validated for colorblind
      separation (worst pair ΔE 12.0 under deuteranopia) and 3:1 contrast on both surfaces.
@@ -35,18 +48,48 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* Dark: near-black ground, panels a step lighter, separated by hairlines rather than shadow.
+   Contrast on ground / panel: ink 16.9 / 15.9, ink-2 8.0 / 7.5, ink-3 5.7 / 5.3. The sentiment
+   poles are lighter so they hold 3:1 on the dark panel (worst colorblind pair ΔE 12.0). */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0c0f0e;
+    --panel: #131716;
+    --skeleton: #1d2220;
+    --line: rgba(255, 255, 255, 0.08);
+    --guide: rgba(255, 255, 255, 0.05);
+    --shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 24px 48px -24px rgba(0, 0, 0, 0.7);
+    --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55);
+    --art-opacity: 0.3;
+
+    --ink: #eef1ef;
+    --ink-2: #a1a9a5;
+    --ink-3: #858d89;
+    --grid: #222826;
+    --axis: #3b423f;
+    --critical: #f2735f;
+    --on-ink: #0c0f0e;
+    --tooltip-bg: #1f2523;
+    --tooltip-ink: #eef1ef;
+    --tooltip-ink-2: #a1a9a5;
+    --search-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a9a5' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='m20 20-4.2-4.2'/%3E%3C/svg%3E");
+
+    --sentiment-negative: #e4582f;
+    --sentiment-neutral: #868c88;
+    --sentiment-positive: #6b8ff2;
+  }
+}
+
 *,
 *::before,
 *::after {
   box-sizing: border-box;
 }
 
-/* A faint grain over the page color, so the ground reads as a material rather than a flat fill */
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: var(--ground);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23g)' opacity='0.09'/%3E%3C/svg%3E");
+  background: var(--ground);
 }
 
 h1, h2, h3, h4, p {
@@ -76,6 +119,7 @@ input {
 /* ---------- Page layout ---------- */
 .page {
   max-width: 1160px;
+  min-height: 100vh;
   margin: 0 auto;
   padding: 0 16px;
 }
@@ -107,7 +151,7 @@ main {
 .page-footer {
   margin-top: 48px;
   padding: 20px 0 48px;
-  border-top: 2px solid var(--ink);
+  border-top: 1px solid var(--line);
   font-size: 0.8125rem;
   color: var(--ink-2);
 }
@@ -123,8 +167,8 @@ main {
   align-items: center;
   justify-content: space-between;
   gap: 16px 32px;
-  padding: 20px 0 18px;
-  border-bottom: 2px solid var(--ink);
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .brand {
@@ -142,7 +186,7 @@ main {
 
 .brand h1 {
   font-family: var(--font-display);
-  font-weight: 800;
+  font-weight: 750;
   font-size: 1.75rem;
   line-height: 1;
   letter-spacing: 0.01em;
@@ -216,28 +260,31 @@ main {
 .button-secondary {
   min-height: 40px;
   padding: 8px 18px;
-  border: 1.5px solid var(--ink);
-  border-radius: 4px;
+  border: 1px solid var(--ink);
+  border-radius: 8px;
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color 0.15s;
 }
 
 .button-primary {
   background: var(--ink);
-  color: var(--panel);
+  color: var(--on-ink);
 }
 
 .button-primary:hover:not(:disabled) {
-  background: #323d3a;
+  background: color-mix(in srgb, var(--ink) 82%, var(--ground));
 }
 
 .button-secondary {
   background: transparent;
+  border-color: var(--axis);
 }
 
 .button-secondary:hover:not(:disabled) {
   background: var(--ground);
+  border-color: var(--ink-3);
 }
 
 .button-primary:disabled,
@@ -274,9 +321,20 @@ main {
   width: 100%;
   height: 48px;
   padding: 0 14px 0 42px;
-  border: 1.5px solid var(--ink);
-  border-radius: 4px;
-  background: var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231c2321' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='m20 20-4.2-4.2'/%3E%3C/svg%3E") no-repeat 14px center / 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel) var(--search-icon) no-repeat 14px center / 18px;
+  box-shadow: var(--shadow);
+  transition: border-color 0.15s;
+}
+
+.game-search input:hover {
+  border-color: var(--axis);
+}
+
+.game-search input:focus-visible {
+  border-color: var(--ink-3);
+  outline-offset: 3px;
 }
 
 .game-search input::placeholder {
@@ -296,9 +354,9 @@ main {
   max-height: min(420px, 60vh);
   overflow-y: auto;
   background: var(--panel);
-  border: 1.5px solid var(--ink);
-  border-radius: 4px;
-  box-shadow: 0 16px 40px rgba(28, 35, 33, 0.22);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
 }
 
 .search-status {
@@ -381,7 +439,9 @@ main {
      be scrolled sideways (by focus or find-in-page), shifting the whole header */
   overflow: clip;
   background: var(--panel);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
 }
 
 /* The game's cover, blurred into a wash of its colors behind the header */
@@ -393,7 +453,7 @@ main {
   height: 240px;
   background: var(--art, none) center / cover;
   filter: blur(44px) saturate(1.4);
-  opacity: 0.38;
+  opacity: var(--art-opacity);
   mask-image: linear-gradient(#000 35%, transparent);
 }
 
@@ -412,7 +472,7 @@ main {
   flex-shrink: 0;
   border-radius: 4px;
   object-fit: cover;
-  box-shadow: 0 0 0 1px var(--rule), 0 6px 18px rgba(28, 35, 33, 0.18);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-pop);
 }
 
 .hero-title {
@@ -422,7 +482,7 @@ main {
 
 .hero-title h2 {
   font-family: var(--font-display);
-  font-weight: 800;
+  font-weight: 750;
   font-size: clamp(2.25rem, 5.5vw, 3.75rem);
   line-height: 0.95;
   overflow-wrap: anywhere;
@@ -610,8 +670,9 @@ main {
   box-shadow: 0 0 0 1px var(--panel);
 }
 
-/* The one animation on the page: when a game loads, positive and negative grow out of the
-   seam in opposite directions, then neutral closes the ring and the numbers appear */
+/* The one animated moment on the page: when a game loads, its name comes into focus while
+   positive and negative grow out of the seam in opposite directions, then neutral closes the
+   ring and the numbers appear */
 @media (prefers-reduced-motion: no-preference) {
   .donut-arc.is-positive,
   .donut-arc.is-negative {
@@ -627,6 +688,15 @@ main {
   .donut-center {
     animation: fade 450ms 350ms ease-out backwards;
   }
+
+  /* The game's name comes into focus as the donut starts to draw */
+  .hero-title h2 {
+    animation: focus-in 700ms cubic-bezier(0.25, 0.8, 0.25, 1) backwards;
+  }
+}
+
+@keyframes focus-in {
+  from { opacity: 0; filter: blur(12px); }
 }
 
 @keyframes draw {
@@ -643,7 +713,9 @@ main {
   gap: 16px;
   padding: 24px 16px;
   background: var(--panel);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
 }
 
 .section-head h3 {
@@ -689,16 +761,17 @@ main {
   flex-direction: column;
   gap: 2px;
   padding: 8px 10px;
-  background: var(--ink);
-  color: #c9cec9;
-  border-radius: 4px;
-  box-shadow: 0 8px 24px rgba(28, 35, 33, 0.25);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-ink-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow-pop);
   font-size: 0.8125rem;
 }
 
 .tooltip strong {
   font-size: 0.9375rem;
-  color: var(--panel);
+  color: var(--tooltip-ink);
 }
 
 .data-table summary {
@@ -946,7 +1019,7 @@ main {
   gap: 6px;
   min-height: 36px;
   padding: 6px 14px;
-  border: 1.5px solid var(--axis);
+  border: 1px solid var(--axis);
   border-radius: 999px;
   background: transparent;
   font-size: 0.875rem;
@@ -956,17 +1029,17 @@ main {
 }
 
 .filter:hover {
-  border-color: var(--ink);
+  border-color: var(--ink-3);
 }
 
 .filter[aria-pressed='true'] {
   background: var(--ink);
   border-color: var(--ink);
-  color: var(--panel);
+  color: var(--on-ink);
 }
 
 .filter[aria-pressed='true'] .dot {
-  box-shadow: 0 0 0 2px var(--ink), 0 0 0 3px var(--panel);
+  box-shadow: 0 0 0 2px var(--ink), 0 0 0 3px var(--on-ink);
 }
 
 /* ---------- Reviews ---------- */
@@ -1081,8 +1154,9 @@ main {
   gap: 12px;
   padding: 24px;
   background: var(--panel);
+  border: 1px solid var(--line);
   border-left: 4px solid var(--ink);
-  border-radius: 8px;
+  border-radius: 12px;
 }
 
 .section .notice {
@@ -1237,10 +1311,28 @@ main {
     padding: 32px;
   }
 
-  /* The heading column stays in view while a long section scrolls past */
+  /* The bar stays at the top, see-through and blurred, so search is always in reach */
+  .page:not(.is-home) .masthead {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    margin: 0 -24px;
+    padding: 16px 24px;
+    background: color-mix(in srgb, var(--ground) 78%, transparent);
+    backdrop-filter: blur(14px) saturate(1.4);
+  }
+
+  /* The heading column stays in view while a long section scrolls past, below the bar */
   .section-head {
     position: sticky;
-    top: 24px;
+    top: 112px;
     align-self: start;
+  }
+}
+
+/* Faint lines down both edges of the content frame the page, once there's room outside it */
+@media (min-width: 1208px) {
+  .page {
+    border-inline: 1px solid var(--guide);
   }
 }
