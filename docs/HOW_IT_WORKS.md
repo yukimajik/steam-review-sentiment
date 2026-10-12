@@ -219,7 +219,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **The players' own votes, not the model** | The question is "who recommends the game", and the vote answers it directly. The model's average score is still in the data table | Model labels (adds the model's errors to a question the votes already answer) |
 | **Boundaries kept in one place (`playtime.py`) and used through `width_bucket`** | The endpoint and the review filter use the same list, so "under 2 h" can't mean 119 minutes in one and 120 in the other | Writing the boundaries into each SQL query |
 | **Hours rounded down for display** | 119 minutes shows as "1.9 h played", so a review listed under "Under 2 h" never says "2.0 h" | Normal rounding (119 minutes would show as 2.0 h under the "Under 2 h" filter) |
-| **No "finished the game" or "refunded" filters** | Steam's review data doesn't include either. Completion would mean looking up each reviewer's achievements: an API key, thousands of requests, and many profiles are private. "Under 2 h at review" is the closest honest stand-in and is labeled that way | Guessing completion from playtime (game lengths differ too much) |
+| **No "finished the game" or "refunded" filters** | Completion isn't in Steam's review data: it would mean looking up each reviewer's achievements (an API key, thousands of requests, and many profiles are private). Refunds partly are: Steam's review API sends an undocumented `refunded` flag on each review. In a check in October 2026, 8 of 1,900 sampled reviews had it, all with 0.1–1.8 h played, 6 of them Not recommended. We don't store it, so "Under 2 h at review" is the stand-in, labeled as one | Storing the `refunded` flag (new columns, and re-fetching the stored reviews to fill them); guessing completion from playtime (game lengths differ too much) |
 
 ### API
 
@@ -549,7 +549,7 @@ All numbers from the stored reviews (38,367 across 19 games, including those fet
 - **Across all games:** reviews under 2 hours are 4.8% of the total, and 33.9% of them recommend the game, against 79.2–81.2% in each longer group.
 - **PAYDAY 3 by group:** under 2 h 24.5% Recommended (216 reviews), 2–10 h 69.9% (624), 10–50 h 73.6% (923), 50 h+ 71.0% (544).
 - **Small groups are common:** 11 of the 19 games have 30 or more reviews under 2 hours; the other 8 have 12–28, so they show counts instead of percentages.
-- **What it doesn't show:** why. Short-playtime reviewers include people who refunded, people who hit a crash on launch, and people who just didn't like it; Steam's data doesn't tell them apart.
+- **What it doesn't show:** why. Short-playtime reviewers include people who refunded, people who hit a crash on launch, and people who just didn't like it. This page doesn't tell them apart. Steam does flag refunded reviews, but the flag is undocumented and isn't stored here.
 
 ## 6. Interview questions
 
@@ -742,10 +742,13 @@ I didn't slow down every request, because I don't know Steam's actual limit and 
 - **Leaving the page stops the loop,** but a request already running on the server finishes and saves its reviews.
 
 **What does the playtime breakdown show, and what can't it show?**
-It shows how many players recommend the game, grouped by how long they had played when they reviewed it. In all 19 stored games, reviewers under 2 hours recommended it less: 24.5% vs. about 70% for PAYDAY 3, 15.5% vs. 58.4% for Overwatch. It can't say why. Steam doesn't report refunds or whether someone finished the game, so "under 2 hours" is a stand-in for the refund window, labeled as that.
+It shows how many players recommend the game, grouped by how long they had played when they reviewed it. In all 19 stored games, reviewers under 2 hours recommended it less: 24.5% vs. about 70% for PAYDAY 3, 15.5% vs. 58.4% for Overwatch. It can't say why. Steam doesn't report whether someone finished the game, and its per-review `refunded` flag is undocumented, rare (8 of 1,900 sampled reviews) and not stored here, so "under 2 hours" stands in for the refund window, labeled as that.
 
 **Why fixed playtime groups and a 30-review minimum?**
 - **Fixed groups** keep "under 2 h" meaning the same on every page, and 2 hours is Steam's refund window. Groups that adapt to each game would always be full, but their boundaries would change per game (0.9 h for one game, 34.5 h for another).
 - **The cost** is that short games have almost nobody at 50 h+.
 - **The minimum** exists because 12 reviews can be off by about ±28 points by chance. Below 30 the page shows "5 of 12 recommended" instead of a percentage and a bar, which is honest about the sample size without hiding it.
+
+**Did you consider showing how developers reply to reviews?**
+Yes, and I checked the data before building it. Steam sends each review's developer reply and its date, so it was possible. In a sample of 200 reviews per stored game (the newest 100 and the 100 most helpful from the past year), only 2 of 19 games had any replies: PAYDAY 3 had 12 and one other game had 1. A section that says "no replies" for almost every game wasn't worth the new columns and re-fetching, so I didn't build it. The same check turned up Steam's undocumented `refunded` flag, which corrected a claim in the playtime section that Steam doesn't report refunds.
 

@@ -16,9 +16,9 @@ export function PlaytimeBreakdown({ data }: { data: Playtime }) {
         <h3>Playtime at review</h3>
         <p className="note">
           How many players recommend the game, grouped by how long they had played when they wrote their review. These
-          are the players’ own votes, not the model. Under 2 hours is Steam’s refund window; Steam doesn’t say who
-          refunded or finished the game. Groups with fewer than {data.min_reviews} reviews show counts instead of
-          percentages.
+          are the players’ own votes, not the model. Under 2 hours is Steam’s refund window; this page doesn’t show who
+          actually refunded or finished the game. Groups with fewer than {data.min_reviews} reviews show counts instead
+          of percentages.
         </p>
       </div>
 
