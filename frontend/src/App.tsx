@@ -3,10 +3,10 @@ import {
   ApiError, fetchFromSteam, getSummary, getTopics, getTrend, getUpdates, isAbort, type SearchResult, type Summary,
   type Topics, type Trend, type Updates,
 } from './api'
-import { ReviewList } from './components/ReviewList'
+import { GameHero, SplitMark } from './components/GameHero'
 import { GameSearch } from './components/GameSearch'
-import { SentimentPie } from './components/SentimentPie'
-import { SummaryCards, SummaryCardsSkeleton } from './components/SummaryCards'
+import { ReviewList } from './components/ReviewList'
+import { SentimentSplit, SentimentSplitSkeleton } from './components/SentimentSplit'
 import { TopicBreakdown } from './components/TopicBreakdown'
 import { ChartSkeleton, TrendChart } from './components/TrendChart'
 import { UpdateShifts } from './components/UpdateShifts'
@@ -83,32 +83,32 @@ export default function App() {
   }
 
   return (
-    <div className="page">
-      <header className="page-header">
-        <h1>Steam Review Sentiment</h1>
-        <p>How players feel about a game, from the text of their Steam reviews.</p>
+    // On the start page the title and search are large; once a game is picked they shrink into a bar
+    <div className={game === null ? 'page is-home' : 'page'}>
+      <header className="masthead">
+        <div className="brand">
+          <SplitMark />
+          <div>
+            <h1>Steam Review Sentiment</h1>
+            <p className="tagline">How players feel about a game, from the text of their Steam reviews.</p>
+          </div>
+        </div>
+        {/* Disabled while fetching, so the result can't land on a different game */}
+        <GameSearch onSelect={pickGame} disabled={fetching} />
       </header>
-
-      {/* Disabled while fetching, so the result can't land on a different game */}
-      <GameSearch onSelect={pickGame} disabled={fetching} />
 
       <main>
         {game === null || appId === null ? (
-          <p className="intro">Search for a game to see its sentiment breakdown, how it changed over time, and the reviews behind it.</p>
+          <p className="intro">
+            Pick a game to see how its reviews split between positive and negative, how that changed week by week and
+            around updates, what players praise and complain about, and the reviews behind it.
+          </p>
         ) : (
           <>
-            <div className="dashboard-header">
-              <div className="game-title">
-                {game.image_url && <img src={game.image_url} alt="" width={116} height={44} />}
-                <div>
-                  <h2>{game.name}</h2>
-                  <p className="game-id">App {appId}</p>
-                </div>
-              </div>
-              <a href={`https://store.steampowered.com/app/${appId}`} target="_blank" rel="noreferrer">
-                View on Steam ↗
-              </a>
-            </div>
+            <GameHero game={game}>
+              {dashboard === null && <SentimentSplitSkeleton />}
+              {dashboard?.status === 'ready' && <SentimentSplit summary={dashboard.summary} />}
+            </GameHero>
 
             {dashboard === null && (
               <div className="dashboard" aria-busy="true">
@@ -119,11 +119,7 @@ export default function App() {
                     without visitors and can take up to a minute to wake up.
                   </p>
                 )}
-                <SummaryCardsSkeleton />
-                <div className="charts">
-                  <ChartSkeleton title="Sentiment breakdown" />
-                  <ChartSkeleton title="Average sentiment by week" />
-                </div>
+                <ChartSkeleton title="Average sentiment by week" />
                 <ChartSkeleton title="Sentiment around updates" />
                 <ChartSkeleton title="What players talk about" />
               </div>
@@ -159,14 +155,10 @@ export default function App() {
 
             {dashboard?.status === 'ready' && (
               <div className="dashboard">
-                <SummaryCards summary={dashboard.summary} />
-                <div className="charts">
-                  <SentimentPie summary={dashboard.summary} />
-                  <TrendChart
-                    weeks={dashboard.trend.weeks}
-                    updateTimes={dashboard.updates.updates.map((u) => Date.parse(u.posts[0].posted_at))}
-                  />
-                </div>
+                <TrendChart
+                  weeks={dashboard.trend.weeks}
+                  updateTimes={dashboard.updates.updates.map((u) => Date.parse(u.posts[0].posted_at))}
+                />
                 <UpdateShifts
                   key={`updates-${appId}`}
                   appId={appId}
@@ -183,12 +175,14 @@ export default function App() {
       </main>
 
       <footer className="page-footer">
-        Sentiment labels come from a classifier (TF-IDF + logistic regression) trained on Steam reviews to predict whether
-        the player recommends the game; “neutral” means it isn’t confident either way. “Model agreement” is how often its
-        label matches the player’s own thumbs up or down, with neutral counting as a miss. Topics are found with keyword
-        lists, so reviews that describe a topic in other words are missed; each topic’s praise or complaint comes from
-        the model scoring only the sentences about it. Updates come from each game’s official Steam news; the before/after
-        numbers are comparisons, not proof that an update changed anything.
+        <p>
+          Sentiment labels come from a classifier (TF-IDF + logistic regression) trained on Steam reviews to predict
+          whether the player recommends the game; “neutral” means it isn’t confident either way. “Model agreement” is how
+          often its label matches the player’s own thumbs up or down, with neutral counting as a miss. Topics are found
+          with keyword lists, so reviews that describe a topic in other words are missed; each topic’s praise or
+          complaint comes from the model scoring only the sentences about it. Updates come from each game’s official
+          Steam news; the before/after numbers are comparisons, not proof that an update changed anything.
+        </p>
       </footer>
     </div>
   )

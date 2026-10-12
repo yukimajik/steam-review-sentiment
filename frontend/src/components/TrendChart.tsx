@@ -1,5 +1,5 @@
 import {
-  CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
   type TooltipContentProps,
 } from 'recharts'
 import type { TrendWeek } from '../api'
@@ -67,75 +67,84 @@ export function TrendChart({ weeks, updateTimes }: { weeks: TrendWeek[]; updateT
     ) : null
 
   return (
-    <section className="card chart-card">
-      <h3>Average sentiment by week</h3>
-      <p className="chart-note">
-        Model score from −1 (likely Not recommended) to +1 (likely Recommended), by review date
-        {shownUpdates.length > 0 && '. Dashed lines mark game updates'}
-      </p>
-      <div
-        className="trend"
-        role="img"
-        aria-label={`Line chart of average sentiment by week${shownUpdates.length ? `, with ${shownUpdates.length} updates marked` : ''}. ` +
-          `Most recent: week of ${formatDay(last.week)}, ${formatScore(last.avg_compound)}.`}
-      >
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={points} margin={{ top: 24, right: 24, bottom: 0, left: -12 }}>
-            <CartesianGrid vertical={false} stroke="var(--grid)" />
-            <XAxis
-              dataKey="x"
-              type="number"
-              scale="time"
-              domain={[start, end]}
-              ticks={ticks}
-              tickFormatter={format}
-              stroke="var(--axis)"
-              tick={{ fill: 'var(--text-muted)', fontSize: 12 }}
-              tickLine={false}
-            />
-            <YAxis
-              domain={[-1, 1]}
-              ticks={[-1, -0.5, 0, 0.5, 1]}
-              stroke="var(--axis)"
-              tick={{ fill: 'var(--text-muted)', fontSize: 12 }}
-              tickLine={false}
-              axisLine={false}
-            />
-            <ReferenceLine y={0} stroke="var(--axis)" />
-            {shownUpdates.map((time) => (
-              <ReferenceLine key={time} x={time} stroke="var(--text-muted)" strokeDasharray="4 3" />
-            ))}
-            <Tooltip content={TrendTooltip} cursor={{ stroke: 'var(--axis)', strokeWidth: 1 }} />
-            <Line
-              type="linear"
-              dataKey="avg_compound"
-              stroke="var(--series-1)"
-              strokeWidth={2}
-              dot={{ r: 3, fill: 'var(--series-1)', stroke: 'var(--surface)', strokeWidth: 2 }}
-              activeDot={{ r: 5, fill: 'var(--series-1)', stroke: 'var(--surface)', strokeWidth: 2 }}
-              label={renderEndLabel}
-              isAnimationActive={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+    <section className="section">
+      <div className="section-head">
+        <h3>Average sentiment by week</h3>
+        <p className="note">
+          Model score from −1 (likely Not recommended) to +1 (likely Recommended), by review date
+          {shownUpdates.length > 0 && '. Dashed lines mark game updates'}.
+        </p>
       </div>
-      <details className="data-table">
-        <summary>Show data table</summary>
-        <table>
-          <thead>
-            <tr><th scope="col">Week of</th><th scope="col">Average score</th><th scope="col">Reviews</th></tr>
-          </thead>
-          <tbody>
-            {weeks.map((w) => (
-              <tr key={w.week}>
-                <td>{formatDay(w.week)}</td>
-                <td>{formatScore(w.avg_compound)}</td>
-                <td>{formatCount(w.review_count)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
+      <div className="section-body">
+        <div
+          className="trend"
+          role="img"
+          aria-label={`Line chart of average sentiment by week${shownUpdates.length ? `, with ${shownUpdates.length} updates marked` : ''}. ` +
+            `Most recent: week of ${formatDay(last.week)}, ${formatScore(last.avg_compound)}.`}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={points} margin={{ top: 24, right: 24, bottom: 0, left: -12 }}>
+              {/* Tint the two halves, so above zero reads as leaning Recommended and below as Not recommended */}
+              <ReferenceArea y1={0} y2={1} fill="var(--sentiment-positive)" fillOpacity={0.06} stroke="none"
+                label={{ value: 'Leans Recommended', position: 'insideTopLeft', fill: 'var(--ink-3)', fontSize: 12 }} />
+              <ReferenceArea y1={-1} y2={0} fill="var(--sentiment-negative)" fillOpacity={0.06} stroke="none"
+                label={{ value: 'Leans Not recommended', position: 'insideBottomLeft', fill: 'var(--ink-3)', fontSize: 12 }} />
+              <CartesianGrid vertical={false} stroke="var(--grid)" />
+              <XAxis
+                dataKey="x"
+                type="number"
+                scale="time"
+                domain={[start, end]}
+                ticks={ticks}
+                tickFormatter={format}
+                stroke="var(--axis)"
+                tick={{ fill: 'var(--ink-3)', fontSize: 12 }}
+                tickLine={false}
+              />
+              <YAxis
+                domain={[-1, 1]}
+                ticks={[-1, -0.5, 0, 0.5, 1]}
+                stroke="var(--axis)"
+                tick={{ fill: 'var(--ink-3)', fontSize: 12 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <ReferenceLine y={0} stroke="var(--ink)" strokeOpacity={0.5} />
+              {shownUpdates.map((time) => (
+                <ReferenceLine key={time} x={time} stroke="var(--ink-3)" strokeDasharray="4 3" />
+              ))}
+              <Tooltip content={TrendTooltip} cursor={{ stroke: 'var(--axis)', strokeWidth: 1 }} />
+              <Line
+                type="linear"
+                dataKey="avg_compound"
+                stroke="var(--ink)"
+                strokeWidth={2}
+                dot={{ r: 3, fill: 'var(--ink)', stroke: 'var(--panel)', strokeWidth: 2 }}
+                activeDot={{ r: 5, fill: 'var(--ink)', stroke: 'var(--panel)', strokeWidth: 2 }}
+                label={renderEndLabel}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <details className="data-table">
+          <summary>Show data table</summary>
+          <table>
+            <thead>
+              <tr><th scope="col">Week of</th><th scope="col">Average score</th><th scope="col">Reviews</th></tr>
+            </thead>
+            <tbody>
+              {weeks.map((w) => (
+                <tr key={w.week}>
+                  <td>{formatDay(w.week)}</td>
+                  <td>{formatScore(w.avg_compound)}</td>
+                  <td>{formatCount(w.review_count)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      </div>
     </section>
   )
 }
@@ -160,9 +169,14 @@ function TrendTooltip({ active, payload }: TooltipContentProps) {
 
 export function ChartSkeleton({ title }: { title: string }) {
   return (
-    <section className="card chart-card" aria-hidden="true">
-      <h3>{title}</h3>
-      <div className="skeleton skeleton-chart" />
+    <section className="section" aria-hidden="true">
+      <div className="section-head">
+        <h3>{title}</h3>
+        <div className="skeleton skeleton-text" />
+      </div>
+      <div className="section-body">
+        <div className="skeleton skeleton-chart" />
+      </div>
     </section>
   )
 }

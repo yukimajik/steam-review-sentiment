@@ -38,7 +38,7 @@ export const SENTIMENT_LABELS: Record<Sentiment, string> = {
   negative: 'Negative',
 }
 
-/** Chart colors, defined once in index.css. Blue/red are opposite poles, gray is the neutral midpoint. */
+/** Chart colors, defined once in index.css. Vermilion and cobalt are opposite poles, gray is the neutral midpoint. */
 export const SENTIMENT_COLORS: Record<Sentiment, string> = {
   positive: 'var(--sentiment-positive)',
   neutral: 'var(--sentiment-neutral)',

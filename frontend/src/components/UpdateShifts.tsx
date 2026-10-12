@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ApiError, fetchUpdateReviews, isAbort, type UpdateComparison, type Updates, type UpdateStatus } from '../api'
 import { formatCount, formatDay, formatPct, formatScore, SENTIMENT_COLORS } from '../format'
 
@@ -68,92 +68,97 @@ export function UpdateShifts({ appId, data, onFetched }: { appId: number; data: 
   const minutes = Math.max(1, Math.round((waiting * SECONDS_PER_UPDATE) / 60))
 
   return (
-    <section className="card updates">
-      <h3>Sentiment around updates</h3>
-      <p className="chart-note">
-        Average model score in the {data.window_days} days before vs. the {data.window_days} days after each update
-        from the last 12 months (the update’s own day is left out). This only compares before and after: sales, events,
-        new seasons and new players arrive around the same time, so a shift doesn’t show that an update caused it.
-      </p>
-
-      {progress ? (
-        <p className="notice-status" role="status">
-          <span className="spinner" aria-hidden="true" />
-          {progress.paused
-            ? 'Steam asked us to slow down, so this is waiting a minute before continuing.'
-            : progress.total > 0
-              ? `Fetching reviews around update ${Math.min(progress.done + 1, progress.total)} of ${progress.total}…`
-              : 'Checking Steam’s news for updates…'}{' '}
-          Keep this tab open.
+    <section className="section">
+      <div className="section-head">
+        <h3>Sentiment around updates</h3>
+        <p className="note">
+          Average model score in the {data.window_days} days before vs. the {data.window_days} days after each update
+          from the last 12 months (the update’s own day is left out). This only compares before and after: sales,
+          events, new seasons and new players arrive around the same time, so a shift doesn’t show that an update
+          caused it.
         </p>
-      ) : data.updates.length === 0 ? (
-        <div className="updates-action">
-          <p>
-            {noneFound
-              ? 'No updates found in this game’s official Steam news from the last 12 months. Some developers name their updates in ways this check doesn’t recognize.'
-              : 'Find this game’s updates in its official Steam news, then fetch the reviews from the 2 weeks before and after each one (about 35 seconds per update, up to 10 updates).'}
+      </div>
+      <div className="section-body">
+        {progress ? (
+          <p className="notice-status" role="status">
+            <span className="spinner" aria-hidden="true" />
+            {progress.paused
+              ? 'Steam asked us to slow down, so this is waiting a minute before continuing.'
+              : progress.total > 0
+                ? `Fetching reviews around update ${Math.min(progress.done + 1, progress.total)} of ${progress.total}…`
+                : 'Checking Steam’s news for updates…'}{' '}
+            Keep this tab open.
           </p>
-          {!noneFound && <button type="button" className="button-primary" onClick={fetchAll}>Find updates</button>}
-        </div>
-      ) : waiting > 0 ? (
-        <div className="updates-action">
-          <p>
-            {formatCount(waiting)} {waiting === 1 ? 'update needs' : 'updates need'} the reviews from around them. That
-            takes about {minutes} {minutes === 1 ? 'minute' : 'minutes'}.
+        ) : data.updates.length === 0 ? (
+          <div className="updates-action">
+            <p>
+              {noneFound
+                ? 'No updates found in this game’s official Steam news from the last 12 months. Some developers name their updates in ways this check doesn’t recognize.'
+                : 'Find this game’s updates in its official Steam news, then fetch the reviews from the 2 weeks before and after each one (about 35 seconds per update, up to 10 updates).'}
+            </p>
+            {!noneFound && <button type="button" className="button-primary" onClick={fetchAll}>Find updates</button>}
+          </div>
+        ) : waiting > 0 ? (
+          <div className="updates-action">
+            <p>
+              {formatCount(waiting)} {waiting === 1 ? 'update needs' : 'updates need'} the reviews from around them. That
+              takes about {minutes} {minutes === 1 ? 'minute' : 'minutes'}.
+            </p>
+            <button type="button" className="button-primary" onClick={fetchAll}>
+              Fetch reviews around {waiting === 1 ? 'it' : `${formatCount(waiting)} updates`}
+            </button>
+          </div>
+        ) : null}
+        {error && (
+          <p className="notice-error-text" role="alert">
+            {error} Updates fetched before the error are kept; try again to continue.
           </p>
-          <button type="button" className="button-primary" onClick={fetchAll}>
-            Fetch reviews around {waiting === 1 ? 'it' : `${formatCount(waiting)} updates`}
-          </button>
-        </div>
-      ) : null}
-      {error && (
-        <p className="notice-error-text" role="alert">
-          {error} Updates fetched before the error are kept; try again to continue.
-        </p>
-      )}
+        )}
 
-      {data.updates.length > 0 && (
-        <>
-          {ranked === 0 ? (
-            !progress && waiting === 0 && (
-              <p className="empty">
-                No update has at least {data.min_reviews} reviews on each side yet, so none are ranked.
-              </p>
-            )
-          ) : (
-            <div className="shift-columns">
-              <ShiftList kind="rises" items={data.biggest_rises} />
-              <ShiftList kind="drops" items={data.biggest_drops} />
-            </div>
-          )}
-          <details className="data-table">
-            <summary>All updates ({formatCount(data.updates.length)})</summary>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Date</th><th scope="col">Update</th><th scope="col">Before</th>
-                    <th scope="col">After</th><th scope="col">Change</th><th scope="col">Reviews</th><th scope="col">Note</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.updates.map((u) => (
-                    <tr key={u.day}>
-                      <td>{formatDay(u.day)}</td>
-                      <td><UpdateTitle update={u} /></td>
-                      <td>{scoreOrDash(u.before?.avg_score)}</td>
-                      <td>{scoreOrDash(u.after?.avg_score)}</td>
-                      <td>{scoreOrDash(u.shift)}</td>
-                      <td>{u.before && u.after ? `${formatCount(u.before.reviews)} / ${formatCount(u.after.reviews)}` : '–'}</td>
-                      <td>{STATUS_NOTES[u.status]}</td>
+        {data.updates.length > 0 && (
+          <>
+            {ranked === 0 ? (
+              !progress && waiting === 0 && (
+                <p className="empty">
+                  No update has at least {data.min_reviews} reviews on each side yet, so none are ranked.
+                </p>
+              )
+            ) : (
+              // Drops on the left and rises on the right, like negative and positive everywhere else
+              <div className="shift-columns">
+                <ShiftList kind="drops" items={data.biggest_drops} />
+                <ShiftList kind="rises" items={data.biggest_rises} />
+              </div>
+            )}
+            <details className="data-table">
+              <summary>All updates ({formatCount(data.updates.length)})</summary>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Date</th><th scope="col">Update</th><th scope="col">Before</th>
+                      <th scope="col">After</th><th scope="col">Change</th><th scope="col">Reviews</th><th scope="col">Note</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        </>
-      )}
+                  </thead>
+                  <tbody>
+                    {data.updates.map((u) => (
+                      <tr key={u.day}>
+                        <td>{formatDay(u.day)}</td>
+                        <td><UpdateTitle update={u} /></td>
+                        <td>{scoreOrDash(u.before?.avg_score)}</td>
+                        <td>{scoreOrDash(u.after?.avg_score)}</td>
+                        <td>{scoreOrDash(u.shift)}</td>
+                        <td>{u.before && u.after ? `${formatCount(u.before.reviews)} / ${formatCount(u.after.reviews)}` : '–'}</td>
+                        <td>{STATUS_NOTES[u.status]}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </>
+        )}
+      </div>
     </section>
   )
 }
@@ -169,15 +174,15 @@ function ShiftList({ kind, items }: { kind: 'rises' | 'drops'; items: UpdateComp
       {items.length === 0 ? (
         <p className="empty">No ranked update had a {kind === 'rises' ? 'higher' : 'lower'} average after.</p>
       ) : (
-        <ol className="shifts">
-          {items.map((u) => <ShiftItem key={u.day} update={u} color={color} />)}
+        <ol className="shifts" style={{ '--mark': color } as CSSProperties}>
+          {items.map((u) => <ShiftItem key={u.day} update={u} />)}
         </ol>
       )}
     </div>
   )
 }
 
-function ShiftItem({ update, color }: { update: UpdateComparison; color: string }) {
+function ShiftItem({ update }: { update: UpdateComparison }) {
   const { before, after, shift } = update
   // Ranked updates always have both sides; the check keeps TypeScript (and a surprise API answer) honest
   if (before?.avg_score == null || after?.avg_score == null || shift == null) return null
@@ -189,7 +194,7 @@ function ShiftItem({ update, color }: { update: UpdateComparison; color: string 
       {/* 3 decimals: shifts are often small, and 2 would round before, after and change inconsistently */}
       <p>
         Average score {formatScore(before.avg_score, 3)} → {formatScore(after.avg_score, 3)}{' '}
-        <strong style={{ color }}>({formatScore(shift, 3)})</strong>
+        <strong>({formatScore(shift, 3)})</strong>
       </p>
       <p className="review-footer">
         Recommended {formatPct(before.recommended_pct ?? 0)} → {formatPct(after.recommended_pct ?? 0)} ·{' '}
