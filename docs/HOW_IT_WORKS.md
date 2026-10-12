@@ -22,9 +22,10 @@ A learning guide to this project: what each piece does, how data moves through i
 | `docker-compose.yml` | Starts two containers: `db` (PostgreSQL 17) and `api` (the FastAPI app). The API waits until the database is healthy. |
 | `.env.example` | Template for `.env`, which holds the database password and settings. `.env` is git-ignored so secrets never get committed. |
 | `db/init.sql` | Creates the `reviews` table, adds the sentiment columns, and creates the `review_topics` table. Runs automatically on a brand-new database and is safe to re-run on an existing one. |
-| `backend/app/main.py` | The API: eight endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
+| `backend/app/main.py` | The API: nine endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
 | `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors, or one day at a time), reads a game's official news, and searches the store by name. All share one retry function that respects rate limits. |
 | `backend/app/updates.py` | Game updates: which news posts count as updates, grouping updates less than 2 weeks apart, fetching the reviews around each one, and the before/after numbers. |
+| `backend/app/playtime.py` | The four playtime groups (under 2 h, 2–10 h, 10–50 h, 50 h+), their boundaries in minutes, and the 30-review minimum. Shared by the playtime endpoint and the review filter. |
 | `backend/app/search.py` | Game search on top of Steam's store search: a one-hour cache and the typo fallback. |
 | `backend/app/sentiment.py` | Cleans review text and scores it with the trained classifier, then turns the score into positive / neutral / negative. |
 | `backend/app/topics.py` | The topic keyword lists. Cuts a review into parts (sentences, list items, and at "but"/"however"), finds the parts that mention each topic, and scores just those parts with the classifier. |
@@ -37,7 +38,7 @@ A learning guide to this project: what each piece does, how data moves through i
 | `backend/experiments/compare_models.py` | The model comparison experiment: VADER vs. a pretrained transformer vs. TF-IDF + logistic regression, on games held out from training. Writes `results.md`. |
 | `backend/experiments/requirements.txt` | The experiment's extra packages (VADER, PyTorch, transformers). The app and its Docker image don't use them. |
 | `backend/experiments/results.md` | The latest comparison report, written by the script. |
-| `backend/tests/` | 140 pytest tests: `test_api.py` (endpoints), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
+| `backend/tests/` | 144 pytest tests: `test_api.py` (endpoints, including the playtime groups and filter), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
@@ -46,7 +47,7 @@ A learning guide to this project: what each piece does, how data moves through i
 | `frontend/src/fonts.d.ts` | One line telling TypeScript that the Big Shoulders font package can be imported (it ships CSS only, without type declarations). |
 | `frontend/src/api.ts` | Calls the API, mirrors its response shapes as TypeScript types, and turns failures into messages a person can act on. |
 | `frontend/src/format.ts` | Number, date and score formatting, sentiment colors and labels, topic names, and stripping Steam's formatting tags for display. |
-| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `GameHero` (the game's cover, name and Steam link at the top of its dashboard, plus the small split-ring logo), `SentimentSplit` (the sentiment donut with the negative and positive shares on either side, and the model-agreement bar), `TrendChart`, `TopicBreakdown` (the topic chart and example excerpts), `UpdateShifts` (before/after numbers around updates, and the button that fetches their reviews), `ReviewList`: one file per part of the page. |
+| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `GameHero` (the game's cover, name and Steam link at the top of its dashboard, plus the small split-ring logo), `SentimentSplit` (the sentiment donut with the negative and positive shares on either side, and the model-agreement bar), `TrendChart`, `PlaytimeBreakdown` (Recommended vs. Not recommended for each playtime group), `TopicBreakdown` (the topic chart and example excerpts), `UpdateShifts` (before/after numbers around updates, and the button that fetches their reviews), `ReviewList`: one file per part of the page. |
 | `frontend/src/index.css` | All styling: color, type and surface tokens, the layout, the donut's load animation, and the phone/tablet/desktop breakpoints. |
 | `frontend/public/favicon.svg` | The browser-tab icon: the same split ring as the logo. |
 | `frontend/package.json` | Frontend dependencies (React, Recharts, Vite, TypeScript, Oxlint) and scripts (`dev`, `build`, `lint`). |
@@ -101,9 +102,10 @@ One row per review per topic it mentions. A review that mentions nothing has no 
 
 - **Summary** runs one SQL query that counts everything at once (`count(*) FILTER (WHERE ...)`): totals per label, Recommended votes, and agreements. Python turns the counts into percentages.
 - **Trend** groups reviews by the week they were posted (Monday to Sunday, UTC) and averages the score. Weeks with no reviews are simply missing, and the chart shows them as gaps.
-- **Reviews** runs two queries: one counts matching reviews (for page numbers), one fetches the requested page, newest first.
+- **Reviews** runs two queries: one counts matching reviews (for page numbers), one fetches the requested page, newest first. It can filter by sentiment, by playtime group, or both.
+- **Playtime** runs one query. PostgreSQL's `width_bucket(playtime, ARRAY[120, 600, 3000])` turns each review's minutes into its group (0 = under 2 h … 3 = 50 h+, NULL = no playtime), and the query counts reviews and Recommended votes and averages the score per group. Python fills in empty groups and leaves out the percentages for groups under 30 reviews. The review filter uses the same `width_bucket` and boundaries, so the two can't disagree.
 - **Topics** runs three queries: the number of scored reviews; praise, neutral and complaint counts per topic; and the top 3 praise and complaint excerpts per topic, picked with a window function (`row_number() OVER (PARTITION BY topic, label ...)`). Python fills in zeros for topics nobody mentions and sorts by mentions.
-- All four only look at **scored** reviews and return `404` if the game has none.
+- All five only look at **scored** reviews and return `404` if the game has none.
 
 ### Comparing updates: `POST /games/{id}/updates/fetch`, then `GET /games/{id}/updates`
 
@@ -122,10 +124,10 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 ### In the browser
 
 1. You type part of a game's name. `GameSearch` waits until you pause typing (300 ms) and calls `/search` (described in the next section). It shows up to 10 matches with covers. Picking one hands its app ID, name and cover to `App`.
-2. The title and search shrink into a bar at the top, and the game's header (cover, name, Steam link) appears right away. `App` calls `/summary`, `/trend`, `/topics` and `/updates` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
+2. The title and search shrink into a bar at the top, and the game's header (cover, name, Steam link) appears right away. `App` calls `/summary`, `/trend`, `/topics`, `/updates` and `/playtime` at the same time (`Promise.all`) and shows gray placeholder shapes meanwhile.
 3. **404** means the game isn't stored. The page offers "Fetch reviews from Steam", which calls `POST /fetch?max_reviews=1000`. In a real run that took 12.8 seconds, then the dashboard loaded.
 4. **Any other error** shows a message saying what to do (start the API, start the database, try again later) with a "Try again" button.
-5. **Success** draws the sentiment donut and model agreement in the game's header, then the weekly line chart with update markers, the update section and the topic section. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment.
+5. **Success** draws the sentiment donut and model agreement in the game's header, then the weekly line chart with update markers, the playtime section, the update section and the topic section. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment and by playtime group.
 6. **The update section** offers "Find updates", or "Fetch reviews around N updates" with an estimated time. While it runs it shows "update 2 of 5", pauses for a minute if Steam rate limits, and reloads the dashboard when done. Picking another game stops it.
 7. **The topic section** starts on the most-mentioned topic. Clicking a bar or a topic button shows that topic's praise and complaint excerpts.
 8. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
@@ -207,6 +209,17 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Fetched days recorded in their own table** | An interrupted fetch resumes, and days shared by neighboring updates aren't fetched twice | Recording whole updates as done (breaks when groups change as new posts arrive) |
 | **The extra reviews go into the normal `reviews` table** | They're scored and topic-tagged like the rest. The trade-off: the summary, pie, topics and review list now include them, so they describe all stored reviews, not just the newest | A separate table used only for the comparison |
 | **Scores shown with 3 decimals here** | Shifts are often small; with 2 decimals, "+0.52 → +0.54 (+0.01)" looked wrong | 2 decimals as elsewhere |
+
+### Playtime
+
+| Choice | Why | Alternatives |
+|---|---|---|
+| **The same four groups for every game: under 2 h, 2–10 h, 10–50 h, 50 h+** | "Under 2 h" means the same thing on every page, and its boundary is Steam's refund window (refunds are allowed under 2 hours played), which separates "barely tried it" from "kept playing". The trade-off: game lengths differ hugely. The median reviewer was at 2.8 h for one stored game and 118.2 h for Baldur's Gate 3, so a short game's 50 h+ group can be nearly empty (one game has 2 reviews there) | Groups that adapt to each game (four equal quarters): always full, but the boundaries change per game (the first quarter ended at 0.9 h for one game, 34.5 h for another), the labels get harder to read, and the refund-window meaning is lost |
+| **A group needs 30 reviews for percentages; smaller groups show "5 of 12 recommended. Too few to compare."** | A percentage from a small group swings a lot: with 12 reviews it could be off by about ±28 points by chance, with 30 by about ±18. Showing the raw count is honest about how little data there is without throwing it away. 30 matches the updates feature | Hide small groups (loses information); show the bar faded with a warning (people still read a bar as precise); no minimum |
+| **The players' own votes, not the model** | The question is "who recommends the game", and the vote answers it directly. The model's average score is still in the data table | Model labels (adds the model's errors to a question the votes already answer) |
+| **Boundaries kept in one place (`playtime.py`) and used through `width_bucket`** | The endpoint and the review filter use the same list, so "under 2 h" can't mean 119 minutes in one and 120 in the other | Writing the boundaries into each SQL query |
+| **Hours rounded down for display** | 119 minutes shows as "1.9 h played", so a review listed under "Under 2 h" never says "2.0 h" | Normal rounding (119 minutes would show as 2.0 h under the "Under 2 h" filter) |
+| **No "finished the game" or "refunded" filters** | Steam's review data doesn't include either. Completion would mean looking up each reviewer's achievements: an API key, thousands of requests, and many profiles are private. "Under 2 h at review" is the closest honest stand-in and is labeled that way | Guessing completion from playtime (game lengths differ too much) |
 
 ### API
 
@@ -346,6 +359,8 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 **Race conditions.** If you search 620 and then quickly 949230, the 620 answer might arrive last. The page cancels old requests (`AbortController`) and tags results with the request they answer, so the old answer is never shown.
 
 **Responsive design.** One layout that adapts. Below 640px everything is one column, at 640px the example and update columns go side by side, at 960px model agreement moves beside the donut, and at 1000px each section gets its heading column. The redesign was checked at 375px (phone), 1024px, 1280px and 1440px with no sideways scrolling.
+
+**Margin of error.** How far a percentage from a sample could be from the "true" value just by chance. For a share near 50% it's about ±1.96 × √(0.25 / n) at 95% confidence: ±28 points for 12 reviews, ±18 for 30, ±10 for 100. That's why small playtime groups show counts instead of percentages.
 
 **Design tokens.** Named values for colors, fonts and surfaces (`--ground`, `--panel`, `--ink`, `--sentiment-positive`…) defined once at the top of `index.css` and used everywhere, including inside the charts. Changing a color means changing one line, and the chart colors can't drift from the rest of the page.
 
@@ -518,10 +533,28 @@ Known misses: Rust's monthly updates, whose titles are single words like "LIVEST
 - Reading the news alone took 0.1 s.
 - Steam rate limited us once, after about 125 requests in 2.5 minutes. It lifted within 91 s of probing.
 
+### Playtime at review
+
+All numbers from the stored reviews (38,367 across 19 games, including those fetched around updates).
+
+**In every one of the 19 games, players who reviewed under 2 hours in recommend the game less often than those with 2 hours or more.**
+
+| Game | Under 2 h: reviews | Under 2 h: Recommended | 2 h or more: Recommended |
+|---|---|---|---|
+| Overwatch | 516 | 15.5% | 58.4% |
+| PAYDAY 3 | 216 | 24.5% | 71.8% |
+| Portal 2 | 49 | 93.9% | 98.3% |
+| Baldur's Gate 3 | 12 | 5 of 12 (too few for a percentage) | 95.2% |
+
+- **Across all games:** reviews under 2 hours are 4.8% of the total, and 33.9% of them recommend the game, against 79.2–81.2% in each longer group.
+- **PAYDAY 3 by group:** under 2 h 24.5% Recommended (216 reviews), 2–10 h 69.9% (624), 10–50 h 73.6% (923), 50 h+ 71.0% (544).
+- **Small groups are common:** 11 of the 19 games have 30 or more reviews under 2 hours; the other 8 have 12–28, so they show counts instead of percentages.
+- **What it doesn't show:** why. Short-playtime reviewers include people who refunded, people who hit a crash on launch, and people who just didn't like it; Steam's data doesn't tell them apart.
+
 ## 6. Interview questions
 
 **Walk me through the architecture.**
-A FastAPI service and PostgreSQL, run together with Docker Compose. `POST /games/{id}/fetch` pulls reviews from Steam's API page by page, saves them without duplicates, labels each one with a TF-IDF + logistic regression classifier trained on Steam reviews, and tags the topics it mentions. `GET` endpoints serve a summary, a weekly trend, a topic breakdown, before/after numbers around game updates, and filtered, paginated reviews to a React frontend. A second `POST` reads a game's Steam news for updates and fetches the reviews around them. The fetching and scoring logic lives in one shared package that both the API and the command-line scripts use.
+A FastAPI service and PostgreSQL, run together with Docker Compose. `POST /games/{id}/fetch` pulls reviews from Steam's API page by page, saves them without duplicates, labels each one with a TF-IDF + logistic regression classifier trained on Steam reviews, and tags the topics it mentions. `GET` endpoints serve a summary, a weekly trend, a playtime breakdown, a topic breakdown, before/after numbers around game updates, and filtered, paginated reviews to a React frontend. A second `POST` reads a game's Steam news for updates and fetches the reviews around them. The fetching and scoring logic lives in one shared package that both the API and the command-line scripts use.
 
 **What happens if you fetch the same game twice?**
 Nothing bad. Each review has Steam's unique ID as the primary key, and inserts use `ON CONFLICT DO NOTHING`, so known reviews are skipped. The response's `new` count shows how many were actually added. A test covers this: the second fetch returns `new: 0`.
@@ -707,3 +740,12 @@ I didn't slow down every request, because I don't know Steam's actual limit and 
 - **Many shifts are small** compared to how much the numbers move from week to week.
 - **The extra reviews change the other charts,** since they become part of the game's stored reviews.
 - **Leaving the page stops the loop,** but a request already running on the server finishes and saves its reviews.
+
+**What does the playtime breakdown show, and what can't it show?**
+It shows how many players recommend the game, grouped by how long they had played when they reviewed it. In all 19 stored games, reviewers under 2 hours recommended it less: 24.5% vs. about 70% for PAYDAY 3, 15.5% vs. 58.4% for Overwatch. It can't say why. Steam doesn't report refunds or whether someone finished the game, so "under 2 hours" is a stand-in for the refund window, labeled as that.
+
+**Why fixed playtime groups and a 30-review minimum?**
+- **Fixed groups** keep "under 2 h" meaning the same on every page, and 2 hours is Steam's refund window. Groups that adapt to each game would always be full, but their boundaries would change per game (0.9 h for one game, 34.5 h for another).
+- **The cost** is that short games have almost nobody at 50 h+.
+- **The minimum** exists because 12 reviews can be off by about ±28 points by chance. Below 30 the page shows "5 of 12 recommended" instead of a percentage and a bar, which is honest about the sample size without hiding it.
+

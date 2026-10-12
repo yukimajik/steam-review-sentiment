@@ -1,4 +1,4 @@
-import type { Sentiment, Topic } from './api'
+import type { PlaytimeGroup, Sentiment, Topic } from './api'
 
 const integer = new Intl.NumberFormat('en-US')
 
@@ -27,9 +27,10 @@ const BBCODE_TAG = /\[\/?(?:h[1-3]|b|u|i|strike|spoiler|noparse|hr|url|quote|cod
 
 export const stripFormatting = (text: string) => text.replace(BBCODE_TAG, '').trim()
 
+/** Rounded down, so the hours shown always match the playtime group: 119 minutes is "1.9 h", not "2.0 h". */
 export function formatPlaytime(minutes: number | null): string | null {
   if (minutes == null) return null
-  return `${(minutes / 60).toFixed(1)} h played`
+  return `${(Math.floor(minutes / 6) / 10).toFixed(1)} h played`
 }
 
 export const SENTIMENT_LABELS: Record<Sentiment, string> = {
@@ -54,4 +55,12 @@ export const TOPIC_LABELS: Record<Topic, string> = {
   graphics: 'Graphics',
   multiplayer: 'Multiplayer / servers',
   content: 'Content / length',
+}
+
+/** Playtime at the time of the review. Under 2 hours is Steam's refund window. */
+export const PLAYTIME_LABELS: Record<PlaytimeGroup, string> = {
+  under_2h: 'Under 2 h',
+  '2_to_10h': '2–10 h',
+  '10_to_50h': '10–50 h',
+  '50h_plus': '50 h+',
 }

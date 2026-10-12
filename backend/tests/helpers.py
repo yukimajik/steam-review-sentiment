@@ -4,13 +4,15 @@ from datetime import datetime, timezone
 
 
 def add_review(conn, review_id, app_id=620, voted_up=True, label="positive", compound=0.5,
-               created_at=datetime(2026, 8, 15, tzinfo=timezone.utc), text="text", helpful_votes=0):
-    """Insert a review with a known sentiment (bypassing the model) so expected numbers are exact."""
+               created_at=datetime(2026, 8, 15, tzinfo=timezone.utc), text="text", helpful_votes=0,
+               playtime=60):
+    """Insert a review with a known sentiment (bypassing the model) so expected numbers are exact.
+    `playtime` is minutes played at the time of the review; None for "Steam didn't say"."""
     conn.execute(
         """INSERT INTO reviews (recommendation_id, app_id, review_text, voted_up, created_at,
-                                sentiment_label, sentiment_compound, helpful_votes)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-        (review_id, app_id, text, voted_up, created_at, label, compound, helpful_votes),
+                                sentiment_label, sentiment_compound, helpful_votes, playtime_at_review_minutes)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+        (review_id, app_id, text, voted_up, created_at, label, compound, helpful_votes, playtime),
     )
     conn.commit()
 

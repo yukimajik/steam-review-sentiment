@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
-from app import db, search, steam, topics, updates
+from app import db, playtime, search, steam, topics, updates
 from app.steam import SteamError, SteamRateLimited, fetch_reviews, to_row
 
 MAX_FETCH = 5000  # the fetch request waits until done, so cap how long that can take
@@ -299,6 +299,57 @@ def game_topics(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_c
     return Topics(app_id=app_id, total_reviews=total, topics=summaries)
 
 
+# ---------- GET /games/{app_id}/playtime ----------
+
+class PlaytimeGroupStats(BaseModel):
+    group: playtime.PlaytimeGroup
+    reviews: int
+    recommended: int               # how many of them voted Recommended
+    recommended_pct: float | None  # None when the group has fewer than min_reviews: too few to compare
+    avg_score: float | None        # average model score, -1 to +1; None likewise
+
+
+class Playtime(BaseModel):
+    app_id: int
+    total_reviews: int
+    min_reviews: int                  # a group needs this many for its percentages
+    unknown_playtime: int             # reviews Steam sent without a playtime; they're in no group
+    groups: list[PlaytimeGroupStats]  # always all four, shortest playtime first
+
+
+PLAYTIME_SQL = """
+    SELECT width_bucket(playtime_at_review_minutes, %(boundaries)s::int[]),  -- NULL playtime -> NULL
+           count(*),
+           count(*) FILTER (WHERE voted_up),
+           avg(sentiment_compound)
+    FROM reviews
+    WHERE app_id = %(app_id)s AND sentiment_label IS NOT NULL
+    GROUP BY 1
+"""
+
+
+@app.get("/games/{app_id}/playtime", response_model=Playtime)
+def game_playtime(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
+    """Reviews grouped by how long the player had played when writing them (under 2 hours,
+    2-10, 10-50, 50+), with how many recommend the game and the model's average score."""
+    rows = {bucket: rest for bucket, *rest in
+            conn.execute(PLAYTIME_SQL, {"app_id": app_id, "boundaries": playtime.BOUNDARIES})}
+    if not rows:
+        raise no_reviews(app_id)
+    unknown = rows.pop(None, [0])[0]
+    groups = []
+    for index, group in enumerate(playtime.GROUPS):
+        reviews, recommended, avg_score = rows.get(index, (0, 0, None))
+        enough = reviews >= playtime.MIN_REVIEWS
+        groups.append(PlaytimeGroupStats(
+            group=group, reviews=reviews, recommended=recommended,
+            recommended_pct=pct(recommended, reviews) if enough else None,
+            avg_score=round(avg_score, 3) if enough else None,
+        ))
+    return Playtime(app_id=app_id, total_reviews=sum(g.reviews for g in groups) + unknown,
+                    min_reviews=playtime.MIN_REVIEWS, unknown_playtime=unknown, groups=groups)
+
+
 # ---------- GET /games/{app_id}/updates and POST /games/{app_id}/updates/fetch ----------
 
 class WindowStats(BaseModel):
@@ -410,6 +461,8 @@ REVIEWS_FILTER = """
     FROM reviews
     WHERE app_id = %(app_id)s AND sentiment_label IS NOT NULL
       AND (%(sentiment)s::text IS NULL OR sentiment_label = %(sentiment)s)
+      AND (%(playtime)s::int IS NULL
+           OR width_bucket(playtime_at_review_minutes, %(boundaries)s::int[]) = %(playtime)s)
 """
 COUNT_REVIEWS_SQL = "SELECT count(*)" + REVIEWS_FILTER
 PAGE_REVIEWS_SQL = """
@@ -426,12 +479,19 @@ def game_reviews(
     app_id: AppId,
     conn: Annotated[psycopg.Connection, Depends(get_conn)],
     sentiment: Sentiment | None = None,
+    # ?playtime= in the URL; a different name here so it doesn't hide the playtime module
+    playtime_group: Annotated[playtime.PlaytimeGroup | None, Query(alias="playtime")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ):
-    """Reviews for a game, newest first, optionally only one sentiment."""
+    """Reviews for a game, newest first, optionally only one sentiment and/or one playtime group."""
     require_reviews(conn, app_id)
-    params = {"app_id": app_id, "sentiment": sentiment, "limit": page_size, "offset": (page - 1) * page_size}
+    params = {
+        "app_id": app_id, "sentiment": sentiment, "limit": page_size, "offset": (page - 1) * page_size,
+        # the group's position in playtime.GROUPS, which is what width_bucket returns
+        "playtime": None if playtime_group is None else playtime.GROUPS.index(playtime_group),
+        "boundaries": playtime.BOUNDARIES,
+    }
     total = conn.execute(COUNT_REVIEWS_SQL, params).fetchone()[0]
     with conn.cursor(row_factory=dict_row) as cur:
         items = [Review(**row) for row in cur.execute(PAGE_REVIEWS_SQL, params)]
