@@ -3,7 +3,7 @@ and reads the periods Valve flagged as off-topic review activity."""
 
 import logging
 import time
-from datetime import date, datetime, time as day_time, timezone
+from datetime import date, datetime, time as day_time, timedelta, timezone
 
 import requests
 
@@ -100,13 +100,20 @@ def fetch_page(app_id: int, cursor: str) -> dict:
 
 
 def fetch_reviews_on_day(app_id: int, day: date) -> list[dict]:
+    """Up to 100 of the reviews posted on one day (UTC), newest first."""
+    start = datetime.combine(day, day_time(), tzinfo=timezone.utc)
+    return fetch_reviews_between(app_id, start, start + timedelta(days=1), f"app {app_id} on {day}")
+
+
+def fetch_reviews_between(app_id: int, start: datetime, end: datetime, what: str) -> list[dict]:
     """
-    Up to 100 of the reviews posted on one day (UTC), newest first. Uses the date range
-    the Steam store's own review filter uses; it isn't in Valve's documentation, so the
-    answer is checked: if none of the reviews are from that day, Steam ignored the range.
+    Up to 100 of the reviews posted from `start` up to (not including) `end`, newest first.
+    Uses the date range the Steam store's own review filter uses; it isn't in Valve's
+    documentation, so the answer is checked: if none of the reviews are in the range, Steam
+    ignored it. `what` names the request in error messages, e.g. "app 620 on 2026-08-18".
     """
-    start = int(datetime.combine(day, day_time(), tzinfo=timezone.utc).timestamp())
-    end = start + 24 * 60 * 60 - 1
+    first = int(start.timestamp())
+    last = int(end.timestamp()) - 1
     params = {
         "json": 1,
         "language": "english",
@@ -115,18 +122,18 @@ def fetch_reviews_on_day(app_id: int, day: date) -> list[dict]:
         "purchase_type": "all",
         "num_per_page": PAGE_SIZE,
         "cursor": "*",
-        "start_date": start,
-        "end_date": end,
+        "start_date": first,
+        "end_date": last,
         "date_range_type": "include",
     }
-    data = get_json(STEAM_REVIEWS_URL.format(app_id=app_id), params, f"app {app_id} on {day}")
+    data = get_json(STEAM_REVIEWS_URL.format(app_id=app_id), params, what)
     if data.get("success") != 1:
-        raise SteamError(f"Steam returned success={data.get('success')} for app {app_id} on {day}")
+        raise SteamError(f"Steam returned success={data.get('success')} for {what}")
     reviews = data.get("reviews", [])
-    on_day = [r for r in reviews if start <= r["timestamp_created"] <= end]
-    if reviews and not on_day:
-        raise SteamError(f"Steam ignored the date range for app {app_id} on {day}")
-    return on_day
+    in_range = [r for r in reviews if first <= r["timestamp_created"] <= last]
+    if reviews and not in_range:
+        raise SteamError(f"Steam ignored the date range for {what}")
+    return in_range
 
 
 def fetch_offtopic_periods(app_id: int) -> list[tuple[datetime, datetime]]:

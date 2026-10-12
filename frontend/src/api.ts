@@ -23,6 +23,14 @@ export interface TrendWeek {
 export interface Trend {
   app_id: number
   weeks: TrendWeek[] // only weeks with reviews; there can be gaps
+  weeks_to_fill: number // past weeks under 30 reviews that fillTrendGaps hasn't asked Steam about yet
+}
+
+export interface GapFillResult {
+  app_id: number
+  filled_weeks: number // weeks this request asked Steam about
+  new_reviews: number
+  remaining: number // weeks still to fill; call again for the next ones
 }
 
 export interface WindowStats {
@@ -216,6 +224,11 @@ export function getTrend(appId: number, signal?: AbortSignal) {
   return request<Trend>(`/games/${appId}/trend`, { signal })
 }
 
+/** Fetches the newest 100 reviews of up to 10 past weeks with fewer than 30 stored (about 15 seconds). */
+export function fillTrendGaps(appId: number, signal?: AbortSignal) {
+  return request<GapFillResult>(`/games/${appId}/trend/fill`, { method: 'POST', signal })
+}
+
 export function getTopics(appId: number, signal?: AbortSignal) {
   return request<Topics>(`/games/${appId}/topics`, { signal })
 }
@@ -254,4 +267,15 @@ export function fetchFromSteam(appId: number, maxReviews: number) {
 
 export function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
+}
+
+/** Resolves after `ms`, or rejects like a cancelled request if `signal` aborts first. */
+export function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }, { once: true })
+  })
 }

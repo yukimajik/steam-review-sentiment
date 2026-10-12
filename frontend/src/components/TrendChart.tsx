@@ -5,6 +5,7 @@ import {
 } from 'recharts'
 import { ApiError, getOfftopic, isAbort, type Offtopic, type OfftopicPeriod, type TrendWeek } from '../api'
 import { formatCount, formatDay, formatScore } from '../format'
+import { GapFill } from './GapFill'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const WEEK_MS = 7 * DAY_MS
@@ -23,7 +24,7 @@ interface Point {
 
 const weekStart = (week: string) => Date.parse(`${week}T00:00:00Z`)
 
-/** One point per week from the first to the last, so weeks without reviews leave a gap in the line. */
+/** One point per week from the first to the last, so weeks without reviews are bridged by the dashed join. */
 function toPoints(weeks: TrendWeek[]): Point[] {
   const byWeek = new Map(weeks.map((w) => [w.week, w]))
   const points: Point[] = []
@@ -65,8 +66,11 @@ function ticksBetween(start: number, end: number): { ticks: number[]; format: (t
   return { ticks, format: (t) => date(t, { month: 'short', day: 'numeric' }) }
 }
 
-// `updateTimes`: when each game update was posted, in milliseconds, drawn as dashed lines
-export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks: TrendWeek[]; updateTimes: number[] }) {
+// `updateTimes`: when each game update was posted, in milliseconds, drawn as dashed lines.
+// `weeksToFill`: past weeks under 30 reviews not yet asked about; `onFilled` reloads the dashboard once they are.
+export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }: {
+  appId: number; weeks: TrendWeek[]; updateTimes: number[]; weeksToFill: number; onFilled: () => void
+}) {
   const offtopic = useOfftopic(appId)
   const points = toPoints(weeks)
   const last = weeks[weeks.length - 1]
@@ -99,8 +103,8 @@ export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks
           Model score from −1 (likely Not recommended) to +1 (likely Recommended), by review date
           {shownUpdates.length > 0 && '. Dashed lines mark game updates'}
           {drawn.length > 0 && '. Hatched areas mark periods Steam flagged as off-topic review activity'}.
-          {hasSparse && ` Hollow dots are weeks with fewer than ${MIN_WEEK_REVIEWS} reviews, too few to join the line.`}
-          {hasGaps && ' Gaps are weeks with no stored reviews: older reviews were only fetched around updates.'}
+          {hasSparse && ` Hollow dots are weeks with fewer than ${MIN_WEEK_REVIEWS} reviews, too few to rely on.`}
+          {(hasSparse || hasGaps) && ' A faint dashed line joins every week that has reviews, so the line doesn’t break where the solid line stops.'}
         </p>
       </div>
       <div className="section-body">
@@ -152,6 +156,20 @@ export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks
                 <ReferenceLine key={time} x={time} stroke="var(--ink-3)" strokeDasharray="4 3" />
               ))}
               <Tooltip content={TrendTooltip} cursor={{ stroke: 'var(--axis)', strokeWidth: 1 }} />
+              {/* Every week with reviews, faint and dashed, under the solid line: where the solid line
+                  stops (a hollow dot or a week with none) this keeps the line from breaking */}
+              <Line
+                type="linear"
+                dataKey="avg_compound"
+                stroke="var(--ink-3)"
+                strokeWidth={1.5}
+                strokeDasharray="3 4"
+                strokeOpacity={0.7}
+                connectNulls
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+              />
               <Line
                 type="linear"
                 dataKey="solid"
@@ -162,7 +180,7 @@ export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks
                 label={renderEndLabel}
                 isAnimationActive={false}
               />
-              {/* Weeks with too few reviews: dots only, never joined to anything */}
+              {/* Weeks with too few reviews: hollow dots, joined only by the dashed line */}
               <Line
                 type="linear"
                 dataKey="sparse"
@@ -174,6 +192,7 @@ export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks
             </LineChart>
           </ResponsiveContainer>
         </div>
+        {weeksToFill > 0 && <GapFill key={appId} appId={appId} weeks={weeksToFill} onFilled={onFilled} />}
         <details className="data-table">
           <summary>Show data table</summary>
           <table>

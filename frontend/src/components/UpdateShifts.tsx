@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { ApiError, fetchUpdateReviews, isAbort, type UpdateComparison, type Updates, type UpdateStatus } from '../api'
+import {
+  ApiError, fetchUpdateReviews, isAbort, wait, type UpdateComparison, type Updates, type UpdateStatus,
+} from '../api'
 import { formatCount, formatDay, formatPct, formatScore, SENTIMENT_COLORS } from '../format'
 
 const SECONDS_PER_UPDATE = 35 // measured: 28 requests to Steam take 33–36 s
@@ -215,15 +217,4 @@ function UpdateTitle({ update }: { update: UpdateComparison }) {
 }
 
 // 3 decimals: shifts are often small, and 2 would round before, after and change inconsistently
-/** Resolves after `ms`, or rejects like a cancelled request if `signal` aborts first. */
-function wait(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer)
-      reject(new DOMException('Aborted', 'AbortError'))
-    }, { once: true })
-  })
-}
-
 const scoreOrDash = (value: number | null | undefined) => (value == null ? '–' : formatScore(value, 3))
