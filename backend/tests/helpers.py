@@ -94,3 +94,8 @@ def review_counts(total, negative):
     """Steam's summary numbers for a review query (sent with the first page)."""
     return FakeResponse(payload={"success": 1, "reviews": [], "query_summary": {
         "num_reviews": 0, "total_reviews": total, "total_negative": negative, "total_positive": total - negative}})
+
+
+def app_details(app_id, name, image="https://img.example.test/header.jpg"):
+    """Steam's store details for one game, in the shape of its JSON."""
+    return FakeResponse(payload={str(app_id): {"success": True, "data": {"name": name, "header_image": image}}})

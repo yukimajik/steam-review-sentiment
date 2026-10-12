@@ -12,6 +12,8 @@ STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"  # undocume
 NEWS_URL = "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
 # Undocumented: the data behind the review chart on a game's store page, including flagged periods
 REVIEW_CHART_URL = "https://store.steampowered.com/appreviewhistogram/{app_id}"
+# Undocumented: a game's store details, used here only for its name and cover image
+APP_DETAILS_URL = "https://store.steampowered.com/api/appdetails"
 OFFTOPIC_EVENT = 0  # the only event type seen; it matched Borderlands 2's known April 2019 review bomb
 NEWS_COUNT = 100           # official posts to read; covers 12 months for every game we checked
 PAGE_SIZE = 100            # Steam's maximum reviews per request
@@ -215,6 +217,20 @@ def search_store(term: str) -> list[dict]:
         for item in data.get("items", [])
         if item.get("type") == "app"
     ]
+
+
+def fetch_app_details(app_id: int) -> tuple[str, str | None] | None:
+    """A game's name and wide cover image from its store page, or None if Steam has no page for it
+    (removed or region-locked games answer success=false)."""
+    params = {"appids": app_id, "filters": "basic", "l": "english"}
+    data = get_json(APP_DETAILS_URL, params, f"details for app {app_id}", timeout=SEARCH_TIMEOUT, max_retries=SEARCH_RETRIES)
+    entry = data.get(str(app_id))
+    if not isinstance(entry, dict) or not entry.get("success") or not isinstance(entry.get("data"), dict):
+        return None
+    details = entry["data"]
+    if not details.get("name"):
+        return None
+    return details["name"], details.get("header_image")
 
 
 def fetch_reviews(app_id: int, max_reviews: int):

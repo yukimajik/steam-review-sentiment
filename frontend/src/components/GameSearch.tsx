@@ -110,7 +110,7 @@ export function GameSearch({ onSelect, disabled }: Props) {
           aria-keyshortcuts="/ Control+K Meta+K"
           autoComplete="off"
           spellCheck={false}
-          placeholder="e.g. Hollow Knight"
+          placeholder="Search any Steam game"
           value={text}
           disabled={disabled}
           onChange={(event) => {
