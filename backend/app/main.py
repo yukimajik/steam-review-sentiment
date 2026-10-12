@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
-from app import db, offtopic, playtime, search, steam, topics, updates
+from app import db, gaps, offtopic, playtime, search, steam, topics, updates
 from app.steam import SteamError, SteamRateLimited, fetch_reviews, to_row
 
 MAX_FETCH = 5000  # the fetch request waits until done, so cap how long that can take
@@ -177,7 +177,7 @@ def game_summary(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_
     )
 
 
-# ---------- GET /games/{app_id}/trend ----------
+# ---------- GET /games/{app_id}/trend and POST /games/{app_id}/trend/fill ----------
 
 class TrendWeek(BaseModel):
     week: str            # the Monday the week starts on, e.g. "2026-09-21"
@@ -188,6 +188,14 @@ class TrendWeek(BaseModel):
 class Trend(BaseModel):
     app_id: int
     weeks: list[TrendWeek]  # only weeks with reviews; there can be gaps
+    weeks_to_fill: int      # gaps POST .../trend/fill hasn't asked Steam about yet
+
+
+class GapFillResult(BaseModel):
+    app_id: int
+    filled_weeks: int  # empty weeks this request asked Steam about
+    new_reviews: int
+    remaining: int     # empty weeks still to fill; call again for the next ones
 
 
 # Weeks (Monday to Sunday) are in UTC so the result doesn't depend on the database server's time zone.
@@ -209,7 +217,30 @@ def game_trend(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_co
     if not rows:
         raise no_reviews(app_id)
     weeks = [TrendWeek(week=week, avg_compound=round(avg, 3), review_count=count) for week, avg, count in rows]
-    return Trend(app_id=app_id, weeks=weeks)
+    return Trend(app_id=app_id, weeks=weeks, weeks_to_fill=len(gaps.empty_weeks(conn, app_id)))
+
+
+@app.post("/games/{app_id}/trend/fill", response_model=GapFillResult)
+def fill_trend_gaps(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
+    """Fill gaps in the weekly chart: for up to 10 weeks with no stored reviews (newest first), fetch
+    the newest 100 reviews of each week (one request per week, about 12 seconds in all). A sample,
+    not the whole week. Call again until `remaining` is 0."""
+    require_reviews(conn, app_id)
+    waiting = gaps.empty_weeks(conn, app_id)
+    batch = waiting[:gaps.WEEKS_PER_REQUEST]
+    try:
+        new = gaps.fill_weeks(conn, app_id, batch)
+    except SteamRateLimited as error:
+        db.score_reviews(conn, app_id=app_id)  # weeks filled before the failure are kept and scored
+        raise HTTPException(429, "Steam is limiting requests right now. The reviews fetched so far are saved; "
+                                 "try again in a minute to continue.",
+                            headers={"Retry-After": str(RATE_LIMIT_WAIT)}) from error
+    except SteamError as error:
+        db.score_reviews(conn, app_id=app_id)
+        raise HTTPException(502, f"Steam API error: {error}") from error
+    db.score_reviews(conn, app_id=app_id)
+    return GapFillResult(app_id=app_id, filled_weeks=len(batch), new_reviews=new,
+                         remaining=len(waiting) - len(batch))
 
 
 # ---------- GET /games/{app_id}/topics ----------

@@ -5,6 +5,7 @@ import {
 } from 'recharts'
 import { ApiError, getOfftopic, isAbort, type Offtopic, type OfftopicPeriod, type TrendWeek } from '../api'
 import { formatCount, formatDay, formatScore } from '../format'
+import { GapFill } from './GapFill'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const WEEK_MS = 7 * DAY_MS
@@ -65,8 +66,11 @@ function ticksBetween(start: number, end: number): { ticks: number[]; format: (t
   return { ticks, format: (t) => date(t, { month: 'short', day: 'numeric' }) }
 }
 
-// `updateTimes`: when each game update was posted, in milliseconds, drawn as dashed lines
-export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks: TrendWeek[]; updateTimes: number[] }) {
+// `updateTimes`: when each game update was posted, in milliseconds, drawn as dashed lines.
+// `weeksToFill`: gaps not yet asked about; `onFilled` reloads the dashboard once they are.
+export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }: {
+  appId: number; weeks: TrendWeek[]; updateTimes: number[]; weeksToFill: number; onFilled: () => void
+}) {
   const offtopic = useOfftopic(appId)
   const points = toPoints(weeks)
   const last = weeks[weeks.length - 1]
@@ -100,7 +104,9 @@ export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks
           {shownUpdates.length > 0 && '. Dashed lines mark game updates'}
           {drawn.length > 0 && '. Hatched areas mark periods Steam flagged as off-topic review activity'}.
           {hasSparse && ` Hollow dots are weeks with fewer than ${MIN_WEEK_REVIEWS} reviews, too few to join the line.`}
-          {hasGaps && ' Gaps are weeks with no stored reviews: older reviews were only fetched around updates.'}
+          {hasGaps && (weeksToFill > 0
+            ? ' Gaps are weeks with no stored reviews: older reviews were only fetched around updates.'
+            : ' Gaps are weeks Steam returned no English reviews for.')}
         </p>
       </div>
       <div className="section-body">
@@ -174,6 +180,7 @@ export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks
             </LineChart>
           </ResponsiveContainer>
         </div>
+        {weeksToFill > 0 && <GapFill key={appId} appId={appId} weeks={weeksToFill} onFilled={onFilled} />}
         <details className="data-table">
           <summary>Show data table</summary>
           <table>

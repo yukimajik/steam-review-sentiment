@@ -51,3 +51,12 @@ CREATE TABLE IF NOT EXISTS update_review_days (
     day    DATE NOT NULL,
     PRIMARY KEY (app_id, day)
 );
+
+-- Weeks with no stored reviews that were filled for the weekly chart (backend/app/gaps.py) by
+-- fetching the newest 100 reviews of the week. Remembered so a week Steam has no reviews for isn't
+-- asked about again, and an interrupted fill resumes where it stopped.
+CREATE TABLE IF NOT EXISTS gap_weeks (
+    app_id INTEGER NOT NULL,
+    week   DATE NOT NULL,  -- the Monday the week starts on (UTC)
+    PRIMARY KEY (app_id, week)
+);

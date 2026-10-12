@@ -21,11 +21,12 @@ A learning guide to this project: what each piece does, how data moves through i
 |---|---|
 | `docker-compose.yml` | Starts two containers: `db` (PostgreSQL 17) and `api` (the FastAPI app). The API waits until the database is healthy. |
 | `.env.example` | Template for `.env`, which holds the database password and settings. `.env` is git-ignored so secrets never get committed. |
-| `db/init.sql` | Creates the `reviews` table, adds the sentiment columns, and creates the `review_topics` table. Runs automatically on a brand-new database and is safe to re-run on an existing one. |
-| `backend/app/main.py` | The API: ten endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
-| `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors, or one day at a time), reads a game's official news, searches the store by name, and reads the periods Valve flagged as off-topic review activity with how many reviews they leave out. All share one retry function that respects rate limits and rejects answers that aren't JSON objects. |
+| `db/init.sql` | Creates the `reviews` table, adds the sentiment columns, and creates the `review_topics`, `game_updates`, `update_review_days` and `gap_weeks` tables. Runs automatically on a brand-new database and is safe to re-run on an existing one. |
+| `backend/app/main.py` | The API: eleven endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
+| `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors, or for one day or one week), reads a game's official news, searches the store by name, and reads the periods Valve flagged as off-topic review activity with how many reviews they leave out. All share one retry function that respects rate limits and rejects answers that aren't JSON objects. |
 | `backend/app/offtopic.py` | Puts together a game's flagged off-topic periods and the counts of reviews each leaves out, and caches the answer for an hour. |
 | `backend/app/updates.py` | Game updates: which news posts count as updates, grouping updates less than 2 weeks apart, fetching the reviews around each one, and the before/after numbers. |
+| `backend/app/gaps.py` | Filling the gaps in the weekly chart: finds weeks with no stored reviews and fetches the newest 100 reviews of each. |
 | `backend/app/playtime.py` | The four playtime groups (under 2 h, 2–10 h, 10–50 h, 50 h+), their boundaries in minutes, and the 30-review minimum. Shared by the playtime endpoint and the review filter. |
 | `backend/app/search.py` | Game search on top of Steam's store search: a one-hour cache and the typo fallback. |
 | `backend/app/sentiment.py` | Cleans review text and scores it with the trained classifier, then turns the score into positive / neutral / negative. |
@@ -39,7 +40,7 @@ A learning guide to this project: what each piece does, how data moves through i
 | `backend/experiments/compare_models.py` | The model comparison experiment: VADER vs. a pretrained transformer vs. TF-IDF + logistic regression, on games held out from training. Writes `results.md`. |
 | `backend/experiments/requirements.txt` | The experiment's extra packages (VADER, PyTorch, transformers). The app and its Docker image don't use them. |
 | `backend/experiments/results.md` | The latest comparison report, written by the script. |
-| `backend/tests/` | 154 pytest tests: `test_api.py` (endpoints, including the playtime groups and filter), `test_offtopic.py` (flagged periods, counts, cache and Steam errors), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
+| `backend/tests/` | 163 pytest tests: `test_api.py` (endpoints, including the playtime groups and filter), `test_gaps.py` (filling the weekly chart's gaps), `test_offtopic.py` (flagged periods, counts, cache and Steam errors), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
@@ -48,7 +49,7 @@ A learning guide to this project: what each piece does, how data moves through i
 | `frontend/src/fonts.d.ts` | One line telling TypeScript that the Big Shoulders font package can be imported (it ships CSS only, without type declarations). |
 | `frontend/src/api.ts` | Calls the API, mirrors its response shapes as TypeScript types, and turns failures into messages a person can act on. |
 | `frontend/src/format.ts` | Number, date and score formatting, sentiment colors and labels, topic names, and stripping Steam's formatting tags for display. |
-| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `GameHero` (the game's cover, name and Steam link at the top of its dashboard, plus the small split-ring logo), `SentimentSplit` (the sentiment donut with the negative and positive shares on either side, and the model-agreement bar), `TrendChart`, `PlaytimeBreakdown` (Recommended vs. Not recommended for each playtime group), `TopicBreakdown` (the topic chart and example excerpts), `UpdateShifts` (before/after numbers around updates, and the button that fetches their reviews), `ReviewList`: one file per part of the page. |
+| `frontend/src/components/` | `GameSearch` (the search box and dropdown), `GameHero` (the game's cover, name and Steam link at the top of its dashboard, plus the small split-ring logo), `SentimentSplit` (the sentiment donut with the negative and positive shares on either side, and the model-agreement bar), `TrendChart`, `GapFill` (the button under the weekly chart that fills its empty weeks), `PlaytimeBreakdown` (Recommended vs. Not recommended for each playtime group), `TopicBreakdown` (the topic chart and example excerpts), `UpdateShifts` (before/after numbers around updates, and the button that fetches their reviews), `ReviewList`: one file per part of the page. |
 | `frontend/src/index.css` | All styling: color, type and surface tokens, the layout, the donut's load animation, and the phone/tablet/desktop breakpoints. |
 | `frontend/public/favicon.svg` | The browser-tab icon: the same split ring as the logo. |
 | `frontend/package.json` | Frontend dependencies (React, Recharts, Vite, TypeScript, Oxlint) and scripts (`dev`, `build`, `lint`). |
@@ -69,6 +70,10 @@ A learning guide to this project: what each piece does, how data moves through i
 
 - **`game_updates`**: one row per news post that counts as an update. Columns: Steam's post ID (`gid`), `app_id`, `title`, `url`, and `posted_at`. It's replaced each time the news is read, so a post that no longer counts disappears.
 - **`update_review_days`**: `(app_id, day)` for every day whose reviews were fetched for the comparison. A day shared by two updates is fetched once, and an interrupted fetch resumes at the first missing day.
+
+### The `gap_weeks` table
+
+`(app_id, week)` for every empty week of the weekly chart that was filled (the week's Monday, UTC). Without it, a week Steam has no reviews for would stay empty and be asked about again on every fill.
 
 ### The `review_topics` table
 
@@ -102,7 +107,7 @@ One row per review per topic it mentions. A review that mentions nothing has no 
 ### Reading: summary, trend, reviews
 
 - **Summary** runs one SQL query that counts everything at once (`count(*) FILTER (WHERE ...)`): totals per label, Recommended votes, and agreements. Python turns the counts into percentages.
-- **Trend** groups reviews by the week they were posted (Monday to Sunday, UTC) and averages the score. Weeks with no reviews are simply missing, and the chart shows them as gaps.
+- **Trend** groups reviews by the week they were posted (Monday to Sunday, UTC) and averages the score. Weeks with no reviews are simply missing, and the chart shows them as gaps. It also returns `weeks_to_fill`: how many of those gaps haven't been filled yet.
 - **Reviews** runs two queries: one counts matching reviews (for page numbers), one fetches the requested page, newest first. It can filter by sentiment, by playtime group, or both.
 - **Playtime** runs one query. PostgreSQL's `width_bucket(playtime, ARRAY[120, 600, 3000])` turns each review's minutes into its group (0 = under 2 h … 3 = 50 h+, NULL = no playtime), and the query counts reviews and Recommended votes and averages the score per group. Python fills in empty groups and leaves out the percentages for groups under 30 reviews. The review filter uses the same `width_bucket` and boundaries, so the two can't disagree.
 - **Topics** runs three queries: the number of scored reviews; praise, neutral and complaint counts per topic; and the top 3 praise and complaint excerpts per topic, picked with a window function (`row_number() OVER (PARTITION BY topic, label ...)`). Python fills in zeros for topics nobody mentions and sorts by mentions.
@@ -118,6 +123,13 @@ One row per review per topic it mentions. A review that mentions nothing has no 
 6. **Rate limits.** If Steam keeps answering 429 after the usual retries, the API answers `429` with `Retry-After: 60`; the days already fetched are kept. The page waits a minute and carries on.
 7. **Comparing.** `GET /updates` reads only the database. For each group it counts reviews, averages the score, and works out the share of Recommended votes in the 14 days before and after, then ranks the 3 biggest rises and drops among updates with at least 30 reviews on each side.
 
+### Filling the weekly chart's gaps: `POST /games/{id}/trend/fill`
+
+1. **Which weeks.** Every week between the first and last week with stored reviews that has none, and isn't in `gap_weeks` yet. Newest first.
+2. **Reviews.** Up to 10 weeks per request. For each, one request asks Steam for that week's reviews (Monday 00:00 to Sunday 23:59:59 UTC), newest first, up to 100. They're saved like any others and the week is recorded in `gap_weeks`, with a 1-second pause between requests. Then the new reviews are scored and topic-tagged.
+3. **Response.** `{"filled_weeks": 10, "new_reviews": 972, "remaining": 28}` (a real run for Black Myth: Wukong, 14.3 s). The page calls again until `remaining` is 0.
+4. **Errors.** Same as the update fetch: `429` with `Retry-After: 60` when Steam rate limits, `502` for other Steam failures. Weeks already filled are kept and scored either way.
+
 ### The command-line scripts
 
 They call the same `app` functions as the API, so there's one copy of the logic. `fetch_reviews.py` + `score_sentiment.py` together do what the fetch endpoint does.
@@ -130,9 +142,10 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 4. **Any other error** shows a message saying what to do (start the API, start the database, try again later) with a "Try again" button.
 5. **Success** draws the sentiment donut and model agreement in the game's header, then the weekly line chart with update markers, the playtime section, the update section and the topic section. `ReviewList` then loads its own data: 10 reviews per page, newest first, optionally filtered by sentiment and by playtime group.
 6. **The update section** offers "Find updates", or "Fetch reviews around N updates" with an estimated time. While it runs it shows "update 2 of 5", pauses for a minute if Steam rate limits, and reloads the dashboard when done. Picking another game stops it.
-7. **The topic section** starts on the most-mentioned topic. Clicking a bar or a topic button shows that topic's praise and complaint excerpts.
-8. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
-9. **The weekly chart asks for off-topic periods on its own** (`/offtopic`), after the rest has loaded. If Steam is down, only its note changes ("Couldn't check Steam…"); the rest of the dashboard is unaffected.
+7. **Under the weekly chart**, when it has gaps that haven't been filled, a button offers to fill them with an estimated time. It shows "Filled 10 of 28 empty weeks", pauses for a minute if Steam rate limits, and reloads the dashboard when done.
+8. **The topic section** starts on the most-mentioned topic. Clicking a bar or a topic button shows that topic's praise and complaint excerpts.
+9. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
+10. **The weekly chart asks for off-topic periods on its own** (`/offtopic`), after the rest has loaded. If Steam is down, only its note changes ("Couldn't check Steam…"); the rest of the dashboard is unaffected.
 
 ### Checking off-topic periods: `GET /games/949230/offtopic`
 
@@ -234,6 +247,18 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Hatched band** | Distinct from the blue and red tints above and below zero, and readable without color | A solid gray band |
 | **Only event type 0** | The only type seen, and it matched Borderlands 2's known period | Showing every event type (unknown meanings) |
 
+### Filling the weekly chart's gaps
+
+| Choice | Why | Alternatives |
+|---|---|---|
+| **One request per empty week: its newest 100 reviews** | Wukong and Silksong each had 37–38 empty weeks out of 54–55. One request each filled a game in about a minute | One request per day, like the update windows (about 260 requests, roughly 5.5 minutes per game); drawing a dashed line across gaps (no new data) |
+| **It's a sample, and the docs say so** | Steam returns reviews newest first, so a busy week's 100 come from its end. Measured: Silksong's filled weeks cover only the last 1.2 days on average, Wukong's 4.9. A filled week's average is the end of that week | Paging further back in each week (more requests); asking for the most helpful reviews instead (`filter=all`, biased toward long reviews) |
+| **Only weeks with no reviews at all, not weeks under 30** | A game with few reviews has most weeks under 30 even when every review is stored; filling those would ask Steam hundreds of times for reviews we already have. So a partly stored week, like Silksong's Sep 14, 2026 with 1 review, stays a hollow dot | Filling every week under 30 |
+| **Remember filled weeks in `gap_weeks`** | A week Steam has no reviews for stays empty; without the table it would be asked about again on every fill, and the button would never go away | Deciding from the reviews alone |
+| **10 weeks per request, the page loops** | Each request stays around 15 s and the page can show progress, the same pattern as the update fetch | One request for every week (about a minute with no progress) |
+| **Only within the stored range** | Fills holes; doesn't stretch the chart further back than the data already goes | Filling back to the game's release (years of requests for old games) |
+| **Filled reviews count everywhere, not just in the chart** | They're ordinary stored reviews, so the totals, playtime groups, topics and review list include them. Wukong went from 2,131 to 5,902 stored reviews and Silksong from 8,119 to 11,819 | Keeping them out of everything but the chart (a flag on every query) |
+
 ### Playtime
 
 | Choice | Why | Alternatives |
@@ -305,7 +330,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Weekly chart: line in ink, faint cobalt above zero and vermilion below** | A single line has no "side", so it's drawn in ink; the tints and their labels ("Leans Recommended" / "Leans Not recommended") say what each half means | A blue line (blue now means positive) |
 | **Data tables under the charts** | Every number is readable without hovering | Tooltips only (hidden on touch screens and to screen readers) |
 | **Weeks with fewer than 30 reviews are hollow dots, not joined to the line** | Hollow Knight: Silksong's week of Sep 14, 2026 had 1 review scored 0.000, and joining it to the next week (+0.49, 358 reviews) drew a cliff that wasn't real. Across all stored games, 156 of 346 weeks have under 30 reviews (only 1 of the 19 games is mostly made of them). 30 is the same minimum as the playtime groups and the update comparison. The tooltip and data table still show every week | Joining every week (one review can draw a cliff); hiding small weeks (loses data) |
-| **A note explains gaps in the weekly line** | Gaps are weeks with no stored reviews, not missing sentiment: older reviews were only fetched around updates (for Silksong, Sep 30 to Nov 2025 and March 2026), and the newest start in September 2026 | Connecting across gaps (implies data that isn't there) |
+| **A note explains gaps in the weekly line** | Before filling, gaps are weeks with no stored reviews: older reviews were only fetched around updates (for Silksong, Sep 30 to Nov 2025 and March 2026), and the newest start in September 2026. After filling, any gap left is a week Steam returned no English reviews for, and the note says that instead | Connecting across gaps (implies data that isn't there) |
 | **Short month labels ("Nov"), with the year on the first tick and on January** | "Nov 2025"-style labels were too wide, so the chart dropped whichever ones overlapped (Silksong's axis skipped Nov, Feb, Apr and Sep). Short labels all fit at desktop width | Fewer ticks (every second month) |
 | **Line chart's y-axis fixed at −1 to +1, with a line at 0** | Shows where sentiment really sits on the model's scale. A zoomed-in axis would make a 0.35 → 0.38 wobble look dramatic | Auto-scaled axis |
 | **Plain CSS with variables, no UI library** | Small, readable, nothing to learn beyond CSS; colors defined once | Tailwind; a component library like MUI |
@@ -597,6 +622,13 @@ All from read-only requests to Steam on October 12, 2026.
 - The update comparison has the same blind spot: days inside a flagged period come back empty from Steam, so a before/after window there is undercounted.
 - The periods come from undocumented data, so Steam could change it.
 
+### Filling the weekly chart's gaps
+
+Real runs on October 12, 2026:
+- **Black Myth: Wukong:** 38 empty weeks filled, 3,771 reviews (84–100 per week). The first 10 weeks took 14.3 s; the rest ran through the page's button. Each sample covers the last 4.9 days of its week on average.
+- **Hollow Knight: Silksong:** 37 empty weeks filled, 100 reviews each (3,700). Each sample covers only the last 1.2 days of its week, since Silksong gets around 100 English reviews a day.
+- **Steam had reviews for every one of the 75 weeks**, so neither chart has a gap left. Silksong keeps two hollow dots: the week of Sep 14, 2026 (1 stored review, at the edge of the newest-reviews fetch) and the current, unfinished week.
+
 ## 6. Interview questions
 
 **Walk me through the architecture.**
@@ -653,7 +685,7 @@ It's a browser rule. A page served from `localhost:5173` (the React dev server) 
 Compose puts both containers on a private network where each service's name is its hostname, so the API connects to `db:5432`. `depends_on` with a health check makes the API wait until PostgreSQL actually accepts connections, not just until its container starts.
 
 **Why does the trend only cover a few weeks for some games?**
-Each fetch starts from the newest review, and 1,000 reviews reach back only 7–37 days for most of these games. Fetching the reviews around updates adds older weeks, with gaps in between. A continuous longer trend needs a bigger fetch, or remembering the cursor where the last fetch stopped so each fetch continues further back.
+Each fetch starts from the newest review, and 1,000 reviews reach back only 7–37 days for most of these games. Fetching the reviews around updates adds older weeks, with gaps in between. The "Fill empty weeks" button then fetches a sample of each empty week (its newest 100 reviews, one request per week), so the line is continuous for the last 12 months. The catch is that it's a sample: for a busy game it's mostly the last day of each week.
 
 **Why didn't you download Steam's full list of games?**
 I tested both options with real calls before choosing.

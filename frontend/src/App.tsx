@@ -166,6 +166,8 @@ export default function App() {
                   appId={appId}
                   weeks={dashboard.trend.weeks}
                   updateTimes={dashboard.updates.updates.map((u) => Date.parse(u.posts[0].posted_at))}
+                  weeksToFill={dashboard.trend.weeks_to_fill}
+                  onFilled={() => setReloadKey((key) => key + 1)}
                 />
                 <PlaytimeBreakdown data={dashboard.playtime} />
                 <UpdateShifts

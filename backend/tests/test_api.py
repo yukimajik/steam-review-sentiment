@@ -139,7 +139,7 @@ def test_trend_averages_by_week(client, conn):
         {"week": "2026-09-21", "avg_compound": 0.2, "review_count": 2},
         {"week": "2026-09-28", "avg_compound": 0.3, "review_count": 1},
         {"week": "2026-10-19", "avg_compound": 0.9, "review_count": 1},
-    ]}
+    ], "weeks_to_fill": 2}  # Oct 5 and Oct 12 have no reviews
 
 
 def test_trend_unknown_game_returns_404(client):
