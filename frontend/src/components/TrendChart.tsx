@@ -1,8 +1,9 @@
+import { useEffect, useState } from 'react'
 import {
   CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
   type TooltipContentProps,
 } from 'recharts'
-import type { TrendWeek } from '../api'
+import { ApiError, getOfftopic, isAbort, type Offtopic, type OfftopicPeriod, type TrendWeek } from '../api'
 import { formatCount, formatDay, formatScore } from '../format'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -50,11 +51,17 @@ function ticksBetween(start: number, end: number): { ticks: number[]; format: (t
 }
 
 // `updateTimes`: when each game update was posted, in milliseconds, drawn as dashed lines
-export function TrendChart({ weeks, updateTimes }: { weeks: TrendWeek[]; updateTimes: number[] }) {
+export function TrendChart({ appId, weeks, updateTimes }: { appId: number; weeks: TrendWeek[]; updateTimes: number[] }) {
+  const offtopic = useOfftopic(appId)
   const points = toPoints(weeks)
   const last = weeks[weeks.length - 1]
   const start = weekStart(weeks[0].week)
-  const end = weekStart(last.week) + WEEK_MS
+  // Flagged periods during or after the stored reviews are drawn, and the axis stretches to show
+  // them: Steam leaves their reviews out, so otherwise the line would just stop with no explanation
+  const drawn = (offtopic?.data?.periods ?? [])
+    .map((p) => ({ from: Math.max(Date.parse(p.start), start), to: Date.parse(p.end) }))
+    .filter((p) => p.to > start)
+  const end = Math.max(weekStart(last.week) + WEEK_MS, ...drawn.map((p) => p.to))
   const { ticks, format } = ticksBetween(start, end)
   const shownUpdates = updateTimes.filter((t) => t >= start && t <= end)
 
@@ -72,24 +79,35 @@ export function TrendChart({ weeks, updateTimes }: { weeks: TrendWeek[]; updateT
         <h3>Average sentiment by week</h3>
         <p className="note">
           Model score from −1 (likely Not recommended) to +1 (likely Recommended), by review date
-          {shownUpdates.length > 0 && '. Dashed lines mark game updates'}.
+          {shownUpdates.length > 0 && '. Dashed lines mark game updates'}
+          {drawn.length > 0 && '. Hatched areas mark periods Steam flagged as off-topic review activity'}.
         </p>
       </div>
       <div className="section-body">
         <div
           className="trend"
           role="img"
-          aria-label={`Line chart of average sentiment by week${shownUpdates.length ? `, with ${shownUpdates.length} updates marked` : ''}. ` +
+          aria-label={`Line chart of average sentiment by week${shownUpdates.length ? `, with ${shownUpdates.length} updates marked` : ''}` +
+            `${drawn.length ? `, and ${drawn.length} off-topic ${drawn.length === 1 ? 'period' : 'periods'} shaded` : ''}. ` +
             `Most recent: week of ${formatDay(last.week)}, ${formatScore(last.avg_compound)}.`}
         >
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={points} margin={{ top: 24, right: 24, bottom: 0, left: -12 }}>
-              {/* Tint the two halves, so above zero reads as leaning Recommended and below as Not recommended */}
+              <defs>
+              <pattern id="offtopic-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="6" stroke="var(--ink-3)" strokeWidth="1.5" strokeOpacity="0.45" />
+              </pattern>
+            </defs>
+            {/* Tint the two halves, so above zero reads as leaning Recommended and below as Not recommended */}
               <ReferenceArea y1={0} y2={1} fill="var(--sentiment-positive)" fillOpacity={0.06} stroke="none"
                 label={{ value: 'Leans Recommended', position: 'insideTopLeft', fill: 'var(--ink-3)', fontSize: 12 }} />
               <ReferenceArea y1={-1} y2={0} fill="var(--sentiment-negative)" fillOpacity={0.06} stroke="none"
                 label={{ value: 'Leans Not recommended', position: 'insideBottomLeft', fill: 'var(--ink-3)', fontSize: 12 }} />
               <CartesianGrid vertical={false} stroke="var(--grid)" />
+            {drawn.map((p) => (
+              <ReferenceArea key={p.from} x1={p.from} x2={p.to} fill="url(#offtopic-hatch)" stroke="none"
+                label={{ value: 'Off-topic', position: 'insideTop', fill: 'var(--ink-3)', fontSize: 12 }} />
+            ))}
               <XAxis
                 dataKey="x"
                 type="number"
@@ -144,9 +162,52 @@ export function TrendChart({ weeks, updateTimes }: { weeks: TrendWeek[]; updateT
             </tbody>
           </table>
         </details>
+        <OfftopicNote state={offtopic} />
       </div>
     </section>
   )
+}
+
+/** The game's flagged periods, loaded on their own so a Steam problem only affects this note. */
+function useOfftopic(appId: number) {
+  const [state, setState] = useState<{ appId: number; data?: Offtopic; error?: string } | null>(null)
+  useEffect(() => {
+    const controller = new AbortController() // a newer game cancels this request
+    getOfftopic(appId, controller.signal)
+      .then((data) => setState({ appId, data }))
+      .catch((error) => {
+        if (isAbort(error)) return
+        setState({ appId, error: error instanceof ApiError ? error.message : 'Something went wrong.' })
+      })
+    return () => controller.abort()
+  }, [appId])
+  return state?.appId === appId ? state : null // null while loading
+}
+
+function OfftopicNote({ state }: { state: { data?: Offtopic; error?: string } | null }) {
+  if (state === null) return null
+  if (state.error) return <p className="note">Couldn’t check Steam for off-topic review periods. {state.error}</p>
+  const periods = state.data?.periods ?? []
+  if (periods.length === 0) return <p className="note">Steam hasn’t flagged any off-topic review activity for this game.</p>
+  return (
+    <div>
+      <p className="note">
+        Steam flagged off-topic review activity (such as a review bomb) for this game. It leaves every review posted
+        in a flagged period out of its review results, which is where these reviews come from, so they’re missing
+        here too.
+      </p>
+      <ul className="offtopic-periods">
+        {periods.map((p) => <li key={p.start}>{describePeriod(p)}</li>)}
+      </ul>
+    </div>
+  )
+}
+
+function describePeriod(p: OfftopicPeriod): string {
+  const dates = `${formatDay(p.start.slice(0, 10))} to ${formatDay(p.end.slice(0, 10))}`
+  const when = p.still_flagged ? `${dates} (still flagged when checked)` : dates
+  return `${when}: ${formatCount(p.reviews_left_out)} English ${p.reviews_left_out === 1 ? 'review' : 'reviews'} ` +
+    `left out, ${formatCount(p.negative_left_out)} of them Not recommended.`
 }
 
 function TrendTooltip({ active, payload }: TooltipContentProps) {

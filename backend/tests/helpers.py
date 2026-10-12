@@ -82,3 +82,15 @@ def news_item(gid, title, posted_at, tags=()):
 
 def news_page(items):
     return FakeResponse(payload={"appnews": {"appid": 620, "newsitems": items, "count": len(items)}})
+
+
+def review_chart(events):
+    """The store page's review chart data, with these flagged periods: (type, start, end) in Unix seconds."""
+    return FakeResponse(payload={"success": 1, "results": {"rollups": []},
+                                 "past_events": [{"type": t, "start_date": s, "end_date": e} for t, s, e in events]})
+
+
+def review_counts(total, negative):
+    """Steam's summary numbers for a review query (sent with the first page)."""
+    return FakeResponse(payload={"success": 1, "reviews": [], "query_summary": {
+        "num_reviews": 0, "total_reviews": total, "total_negative": negative, "total_positive": total - negative}})

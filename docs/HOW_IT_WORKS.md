@@ -22,8 +22,9 @@ A learning guide to this project: what each piece does, how data moves through i
 | `docker-compose.yml` | Starts two containers: `db` (PostgreSQL 17) and `api` (the FastAPI app). The API waits until the database is healthy. |
 | `.env.example` | Template for `.env`, which holds the database password and settings. `.env` is git-ignored so secrets never get committed. |
 | `db/init.sql` | Creates the `reviews` table, adds the sentiment columns, and creates the `review_topics` table. Runs automatically on a brand-new database and is safe to re-run on an existing one. |
-| `backend/app/main.py` | The API: nine endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
-| `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors, or one day at a time), reads a game's official news, and searches the store by name. All share one retry function that respects rate limits. |
+| `backend/app/main.py` | The API: ten endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
+| `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors, or one day at a time), reads a game's official news, searches the store by name, and reads the periods Valve flagged as off-topic review activity with how many reviews they leave out. All share one retry function that respects rate limits and rejects answers that aren't JSON objects. |
+| `backend/app/offtopic.py` | Puts together a game's flagged off-topic periods and the counts of reviews each leaves out, and caches the answer for an hour. |
 | `backend/app/updates.py` | Game updates: which news posts count as updates, grouping updates less than 2 weeks apart, fetching the reviews around each one, and the before/after numbers. |
 | `backend/app/playtime.py` | The four playtime groups (under 2 h, 2–10 h, 10–50 h, 50 h+), their boundaries in minutes, and the 30-review minimum. Shared by the playtime endpoint and the review filter. |
 | `backend/app/search.py` | Game search on top of Steam's store search: a one-hour cache and the typo fallback. |
@@ -38,7 +39,7 @@ A learning guide to this project: what each piece does, how data moves through i
 | `backend/experiments/compare_models.py` | The model comparison experiment: VADER vs. a pretrained transformer vs. TF-IDF + logistic regression, on games held out from training. Writes `results.md`. |
 | `backend/experiments/requirements.txt` | The experiment's extra packages (VADER, PyTorch, transformers). The app and its Docker image don't use them. |
 | `backend/experiments/results.md` | The latest comparison report, written by the script. |
-| `backend/tests/` | 144 pytest tests: `test_api.py` (endpoints, including the playtime groups and filter), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
+| `backend/tests/` | 154 pytest tests: `test_api.py` (endpoints, including the playtime groups and filter), `test_offtopic.py` (flagged periods, counts, cache and Steam errors), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
@@ -131,6 +132,15 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 6. **The update section** offers "Find updates", or "Fetch reviews around N updates" with an estimated time. While it runs it shows "update 2 of 5", pauses for a minute if Steam rate limits, and reloads the dashboard when done. Picking another game stops it.
 7. **The topic section** starts on the most-mentioned topic. Clicking a bar or a topic button shows that topic's praise and complaint excerpts.
 8. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
+9. **The weekly chart asks for off-topic periods on its own** (`/offtopic`), after the rest has loaded. If Steam is down, only its note changes ("Couldn't check Steam…"); the rest of the dashboard is unaffected.
+
+### Checking off-topic periods: `GET /games/949230/offtopic`
+
+1. **The cache:** if this game was checked within the last hour, the saved answer is returned (0.01 s in a real run).
+2. **The periods:** one request to the data behind the review chart on the game's store page (`appreviewhistogram`, undocumented). Its `past_events` list holds the flagged periods as start and end times.
+3. **The counts:** for each period, two requests to the normal review API with `num_per_page=0`, so only Steam's summary numbers come back. One uses Steam's default (off-topic left out), the other `filter_offtopic_activity=0` (included). The difference is what Steam leaves out. English only, to match the stored reviews.
+4. **"Still flagged":** Steam reports a period that's still going on as ending at the moment of the request, so a period ending within 5 minutes of the check is marked as still flagged.
+5. **Errors:** Steam rate limiting becomes `429` with `Retry-After: 60`; any other Steam problem becomes `502`.
 
 ### Searching for a game: `GET /search?q=cyberpnk`
 
@@ -209,6 +219,20 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Fetched days recorded in their own table** | An interrupted fetch resumes, and days shared by neighboring updates aren't fetched twice | Recording whole updates as done (breaks when groups change as new posts arrive) |
 | **The extra reviews go into the normal `reviews` table** | They're scored and topic-tagged like the rest. The trade-off: the summary, pie, topics and review list now include them, so they describe all stored reviews, not just the newest | A separate table used only for the comparison |
 | **Scores shown with 3 decimals here** | Shifts are often small; with 2 decimals, "+0.52 → +0.54 (+0.01)" looked wrong | 2 decimals as elsewhere |
+
+### Off-topic periods
+
+| Choice | Why | Alternatives |
+|---|---|---|
+| **Read Valve's flagged periods from the store page's review-chart data** | It's the only place Valve exposes them. Undocumented, so it was checked against a known case: Borderlands 2's period is April 3–15, 2019, the Epic-exclusivity review bomb | Detecting spikes ourselves (a guess, and it can't see reviews Valve already hid) |
+| **Count what's left out from Steam's summary numbers, 2 requests per period** | Nothing is downloaded; a fresh check took 0.13–0.52 s in real runs | Fetching the left-out reviews themselves |
+| **Keep fetching with Steam's default (off-topic periods left out)** | Our numbers stay consistent with what Steam counts, and nothing new is stored. The page says plainly that those reviews are missing | Storing off-topic reviews with a flag and a switch to include them (a new column, a filter on every query and chart, and day-by-day fetching) |
+| **Loaded separately from the rest of the dashboard** | It's a live call to Steam; if Steam is down, only the note says so | In the dashboard's `Promise.all` (a Steam outage would break the whole page) |
+| **Cached for an hour** | Reloading a dashboard doesn't ask Steam again | No cache |
+| **The chart's time axis stretches to cover flagged periods after the stored reviews** | Shows the gap instead of the line just stopping. For Cities: Skylines II the line ends Sep 22 and the band starts Sep 23 | Listing periods only in the note |
+| **"Still flagged when checked", not "ongoing"** | Measured: twice, 20 s apart, the period's end was exactly the request time (0 s off). Steam doesn't document what that means, so the wording only says what was observed | Calling it ongoing |
+| **Hatched band** | Distinct from the blue and red tints above and below zero, and readable without color | A solid gray band |
+| **Only event type 0** | The only type seen, and it matched Borderlands 2's known period | Showing every event type (unknown meanings) |
 
 ### Playtime
 
@@ -361,6 +385,8 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 **Responsive design.** One layout that adapts. Below 640px everything is one column, at 640px the example and update columns go side by side, at 960px model agreement moves beside the donut, and at 1000px each section gets its heading column. The redesign was checked at 375px (phone), 1024px, 1280px and 1440px with no sideways scrolling.
 
 **Margin of error.** How far a percentage from a sample could be from the "true" value just by chance. For a share near 50% it's about ±1.96 × √(0.25 / n) at 95% confidence: ±28 points for 12 reviews, ±18 for 30, ±10 for 100. That's why small playtime groups show counts instead of percentages.
+
+**Review bombs and off-topic review activity.** A review bomb is a flood of reviews about something other than the game itself, like a store exclusivity deal or a publisher decision. Valve flags such periods and leaves every review posted in them out of the game's score and out of its default review results. The reviews still exist; you have to ask for them.
 
 **Design tokens.** Named values for colors, fonts and surfaces (`--ground`, `--panel`, `--ink`, `--sentiment-positive`…) defined once at the top of `index.css` and used everywhere, including inside the charts. Changing a color means changing one line, and the chart colors can't drift from the rest of the page.
 
@@ -550,6 +576,23 @@ All numbers from the stored reviews (38,367 across 19 games, including those fet
 - **PAYDAY 3 by group:** under 2 h 24.5% Recommended (216 reviews), 2–10 h 69.9% (624), 10–50 h 73.6% (923), 50 h+ 71.0% (544).
 - **Small groups are common:** 11 of the 19 games have 30 or more reviews under 2 hours; the other 8 have 12–28, so they show counts instead of percentages.
 - **What it doesn't show:** why. Short-playtime reviewers include people who refunded, people who hit a crash on launch, and people who just didn't like it. This page doesn't tell them apart. Steam does flag refunded reviews, but the flag is undocumented and isn't stored here.
+
+### Off-topic periods
+
+All from read-only requests to Steam on October 12, 2026.
+
+**Borderlands 2** (not stored, used to check the approach):
+- Flagged April 3–15, 2019.
+- For those days Steam counts **0** English reviews by default and **4,080** with off-topic reviews included, 1,926 of them negative.
+- Over all of April 2019 in every language: 1,237 reviews ("Mostly Positive") by default against 8,270 ("Mixed") with them.
+
+**Our 19 stored games:** only **Cities: Skylines II** has a flagged period, from Sep 23, 2026, still flagged when checked on Oct 12.
+- Steam leaves out **682** English reviews from it, 427 of them Not recommended (earlier the same day it was 681).
+- **This was a hole in our data nobody had noticed:** its reviews were fetched on Oct 6, but the newest stored one is from Sep 22. Steam had silently skipped the two weeks in between.
+
+**Known limits:**
+- The update comparison has the same blind spot: days inside a flagged period come back empty from Steam, so a before/after window there is undercounted.
+- The periods come from undocumented data, so Steam could change it.
 
 ## 6. Interview questions
 
@@ -751,4 +794,10 @@ It shows how many players recommend the game, grouped by how long they had playe
 
 **Did you consider showing how developers reply to reviews?**
 Yes, and I checked the data before building it. Steam sends each review's developer reply and its date, so it was possible. In a sample of 200 reviews per stored game (the newest 100 and the 100 most helpful from the past year), only 2 of 19 games had any replies: PAYDAY 3 had 12 and one other game had 1. A section that says "no replies" for almost every game wasn't worth the new columns and re-fetching, so I didn't build it. The same check turned up Steam's undocumented `refunded` flag, which corrected a claim in the playtime section that Steam doesn't report refunds.
+
+**What's a review bomb, and how does your app handle it?**
+- **What it is:** a flood of reviews about something other than the game. Valve flags those periods and leaves their reviews out of Steam's default results.
+- **The discovery:** our fetches use those defaults, so the reviews were missing from our charts too, silently. Cities: Skylines II was fetched on Oct 6, but its newest stored review was from Sep 22. Steam had flagged Sep 23 onward.
+- **The fix:** the app reads the flagged periods from the data behind Steam's store-page review chart. It counts what each one leaves out using Steam's summary numbers (682 English reviews for Cities: Skylines II, 427 negative). It shades the period on the weekly chart and says plainly that those reviews are missing.
+- **What I checked first:** the approach on a known case (Borderlands 2, April 2019: 0 reviews counted by default, 4,080 with off-topic reviews included), and whether any of our games had a period at all.
 
