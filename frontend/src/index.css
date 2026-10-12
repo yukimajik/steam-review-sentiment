@@ -728,6 +728,12 @@ main {
   color: var(--ink-2);
 }
 
+.offtopic-periods {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.875rem;
+}
+
 /* The all-updates table can be wider than a phone; it scrolls inside its box, not the page */
 .table-scroll {
   overflow-x: auto;

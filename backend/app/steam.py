@@ -1,4 +1,5 @@
-"""Talks to Steam: fetches a game's English reviews and its official news, and searches the store by name."""
+"""Talks to Steam: fetches a game's English reviews and its official news, searches the store by name,
+and reads the periods Valve flagged as off-topic review activity."""
 
 import logging
 import time
@@ -9,6 +10,9 @@ import requests
 STEAM_REVIEWS_URL = "https://store.steampowered.com/appreviews/{app_id}"
 STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"  # undocumented, used by the store's own search box
 NEWS_URL = "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
+# Undocumented: the data behind the review chart on a game's store page, including flagged periods
+REVIEW_CHART_URL = "https://store.steampowered.com/appreviewhistogram/{app_id}"
+OFFTOPIC_EVENT = 0  # the only event type seen; it matched Borderlands 2's known April 2019 review bomb
 NEWS_COUNT = 100           # official posts to read; covers 12 months for every game we checked
 PAGE_SIZE = 100            # Steam's maximum reviews per request
 DELAY_BETWEEN_PAGES = 1.0  # seconds; be polite to Steam's servers
@@ -58,9 +62,12 @@ def get_json(url: str, params: dict, what: str, timeout: float = 30, max_retries
         else:
             if response.status_code == 200:
                 try:
-                    return response.json()
+                    payload = response.json()
                 except ValueError as error:  # e.g. an HTML error page instead of JSON
                     raise SteamError(f"Steam sent a response that isn't JSON for {what}") from error
+                if not isinstance(payload, dict):  # every Steam endpoint we use answers with an object
+                    raise SteamError(f"Steam sent an unexpected response for {what}")
+                return payload
             if not is_retryable(response.status_code):
                 raise SteamError(f"Steam returned HTTP {response.status_code} for {what}")
             status = response.status_code
@@ -120,6 +127,51 @@ def fetch_reviews_on_day(app_id: int, day: date) -> list[dict]:
     if reviews and not on_day:
         raise SteamError(f"Steam ignored the date range for app {app_id} on {day}")
     return on_day
+
+
+def fetch_offtopic_periods(app_id: int) -> list[tuple[datetime, datetime]]:
+    """
+    The periods Valve flagged as off-topic review activity (review bombs), oldest first. Steam
+    leaves every review posted in them out of its default results. For a period that's still
+    going on, the end is the moment of the request.
+    """
+    params = {"l": "english", "review_score_preference": 0}
+    data = get_json(REVIEW_CHART_URL.format(app_id=app_id), params, f"review chart for app {app_id}")
+    if data.get("success") != 1:
+        raise SteamError(f"Steam returned success={data.get('success')} for the review chart of app {app_id}")
+    periods = [
+        (datetime.fromtimestamp(event["start_date"], tz=timezone.utc),
+         datetime.fromtimestamp(event["end_date"], tz=timezone.utc))
+        for event in data.get("past_events") or []
+        if event.get("type") == OFFTOPIC_EVENT
+    ]
+    return sorted(periods)
+
+
+def count_reviews(app_id: int, start: datetime, end: datetime, include_offtopic: bool) -> tuple[int, int]:
+    """
+    (English reviews, negative ones) posted between start and end, from Steam's summary numbers,
+    so no reviews are downloaded. `include_offtopic` adds back what Steam leaves out by default.
+    """
+    params = {
+        "json": 1,
+        "language": "english",
+        "filter": "recent",
+        "review_type": "all",
+        "purchase_type": "all",
+        "num_per_page": 0,  # only the summary
+        "cursor": "*",      # the summary comes with the first page
+        "start_date": int(start.timestamp()),
+        "end_date": int(end.timestamp()),
+        "date_range_type": "include",
+        "filter_offtopic_activity": 0 if include_offtopic else 1,
+    }
+    what = f"review counts for app {app_id}"
+    data = get_json(STEAM_REVIEWS_URL.format(app_id=app_id), params, what)
+    summary = data.get("query_summary") or {}
+    if data.get("success") != 1 or "total_reviews" not in summary or "total_negative" not in summary:
+        raise SteamError(f"Steam sent no review counts for app {app_id}")
+    return summary["total_reviews"], summary["total_negative"]
 
 
 def fetch_news(app_id: int) -> list[dict]:

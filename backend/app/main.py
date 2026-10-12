@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
-from app import db, playtime, search, steam, topics, updates
+from app import db, offtopic, playtime, search, steam, topics, updates
 from app.steam import SteamError, SteamRateLimited, fetch_reviews, to_row
 
 MAX_FETCH = 5000  # the fetch request waits until done, so cap how long that can take
@@ -348,6 +348,36 @@ def game_playtime(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get
         ))
     return Playtime(app_id=app_id, total_reviews=sum(g.reviews for g in groups) + unknown,
                     min_reviews=playtime.MIN_REVIEWS, unknown_playtime=unknown, groups=groups)
+
+
+# ---------- GET /games/{app_id}/offtopic ----------
+
+class OfftopicPeriod(BaseModel):
+    start: datetime
+    end: datetime              # for a period still going on, when Steam was asked
+    reviews_left_out: int      # English reviews posted in the period that Steam leaves out by default
+    negative_left_out: int     # how many of those are Not recommended
+    still_flagged: bool        # the period was still going on when Steam was asked
+
+
+class Offtopic(BaseModel):
+    app_id: int
+    checked_at: datetime          # when Steam was asked; answers are cached for an hour
+    periods: list[OfftopicPeriod]  # oldest first; empty if Valve never flagged the game
+
+
+@app.get("/games/{app_id}/offtopic", response_model=Offtopic)
+def game_offtopic(app_id: AppId):
+    """Periods Valve flagged as off-topic review activity (review bombs). Steam leaves every review
+    posted in them out of its default results, so they're missing from the stored reviews too."""
+    try:
+        checked_at, periods = offtopic.offtopic_periods(app_id)
+    except SteamRateLimited as error:
+        raise HTTPException(429, "Steam is limiting requests right now. Try again in a minute.",
+                            headers={"Retry-After": str(RATE_LIMIT_WAIT)}) from error
+    except SteamError as error:
+        raise HTTPException(502, f"Steam API error: {error}") from error
+    return Offtopic(app_id=app_id, checked_at=checked_at, periods=[OfftopicPeriod(**p) for p in periods])
 
 
 # ---------- GET /games/{app_id}/updates and POST /games/{app_id}/updates/fetch ----------

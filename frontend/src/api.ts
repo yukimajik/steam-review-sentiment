@@ -110,6 +110,20 @@ export interface Playtime {
   groups: PlaytimeGroupStats[] // always all four, shortest playtime first
 }
 
+export interface OfftopicPeriod {
+  start: string
+  end: string // for a period still going on, when Steam was asked
+  reviews_left_out: number // English reviews posted in the period that Steam leaves out by default
+  negative_left_out: number // how many of those are Not recommended
+  still_flagged: boolean // the period was still going on when Steam was asked
+}
+
+export interface Offtopic {
+  app_id: number
+  checked_at: string // answers are cached for an hour
+  periods: OfftopicPeriod[] // oldest first; empty if Valve never flagged the game
+}
+
 export interface Review {
   recommendation_id: number
   review_text: string
@@ -208,6 +222,11 @@ export function getTopics(appId: number, signal?: AbortSignal) {
 
 export function getPlaytime(appId: number, signal?: AbortSignal) {
   return request<Playtime>(`/games/${appId}/playtime`, { signal })
+}
+
+/** Asks Steam (through our API) for periods Valve flagged as off-topic review activity. */
+export function getOfftopic(appId: number, signal?: AbortSignal) {
+  return request<Offtopic>(`/games/${appId}/offtopic`, { signal })
 }
 
 export function getUpdates(appId: number, signal?: AbortSignal) {
