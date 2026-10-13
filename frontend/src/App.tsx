@@ -13,6 +13,7 @@ import { ChartSkeleton, TrendChart } from './components/TrendChart'
 import { UpdateShifts } from './components/UpdateShifts'
 import { SectionNav } from './components/SectionNav'
 import { HomeShowcase } from './components/HomeShowcase'
+import { ThemeToggle } from './components/ThemeToggle'
 import { formatCount } from './format'
 
 const APP_NAME = 'SteamView' // a working name; also the page title in index.html
@@ -103,6 +104,7 @@ export default function App() {
         </div>
         {/* Disabled while fetching, so the result can't land on a different game */}
         <GameSearch onSelect={pickGame} disabled={fetching} />
+        <ThemeToggle />
         {dashboard?.status === 'ready' && <SectionNav />}
       </header>
 
