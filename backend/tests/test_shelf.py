@@ -1,5 +1,5 @@
-"""The front page's list of stored games (backend/app/shelf.py, steam.fetch_app_details and GET /games).
-Steam is faked."""
+"""The front page's list of stored games and one game's details (backend/app/shelf.py, steam.fetch_app_details,
+GET /games and GET /games/{app_id}/details). Steam is faked."""
 
 import pytest
 
@@ -76,3 +76,48 @@ def test_app_details_that_are_not_json(fake_steam):
     fake_steam.responses = [FakeResponse(200)] * 2
     with pytest.raises(SteamError):
         fetch_app_details(620)
+
+
+# ---------- GET /games/{app_id}/details ----------
+
+def test_details_of_a_game_are_looked_up_once_then_kept(client, fake_steam):
+    fake_steam.responses = [app_details(570, "Dota 2")]
+    first = client.get("/games/570/details")
+    second = client.get("/games/570/details")
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json() == {
+        "app_id": 570, "name": "Dota 2", "image_url": "https://img.example.test/header.jpg"}
+    assert len(fake_steam.calls) == 1  # works without stored reviews; the second answer came from the database
+
+
+def test_details_reuse_what_the_shelf_looked_up(client, conn, fake_steam):
+    add_review(conn, 1)
+    fake_steam.responses = [app_details(620, "Portal 2")]
+    client.get("/games")
+    assert client.get("/games/620/details").json()["name"] == "Portal 2"
+    assert len(fake_steam.calls) == 1
+
+
+def test_details_without_a_cover_use_the_fallback_image(client, fake_steam):
+    fake_steam.responses = [FakeResponse(payload={"620": {"success": True, "data": {"name": "Portal 2"}}})]
+    assert client.get("/games/620/details").json()["image_url"] == FALLBACK_IMAGE.format(app_id=620)
+
+
+def test_details_of_a_game_steam_has_no_page_for_return_404(client, fake_steam):
+    fake_steam.responses = [FakeResponse(payload={"620": {"success": False}})]
+    response = client.get("/games/620/details")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Steam has no store page for app 620."
+
+
+def test_details_when_steam_fails_return_502(client, fake_steam):
+    fake_steam.responses = [FakeResponse(503)] * 2 + [app_details(620, "Portal 2")]
+    response = client.get("/games/620/details")
+    assert response.status_code == 502
+    assert "Steam store error" in response.json()["detail"]
+    assert client.get("/games/620/details").json()["name"] == "Portal 2"  # nothing was saved, so it tries again
+
+
+@pytest.mark.parametrize("app_id", ["0", "abc", str(2**31)])
+def test_details_with_a_bad_app_id_return_422(client, app_id):
+    assert client.get(f"/games/{app_id}/details").status_code == 422

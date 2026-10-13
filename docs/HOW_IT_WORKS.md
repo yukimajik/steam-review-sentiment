@@ -22,12 +22,12 @@ A learning guide to this project (the app's working name is SteamView): what eac
 | `docker-compose.yml` | Starts two containers: `db` (PostgreSQL 17) and `api` (the FastAPI app). The API waits until the database is healthy. |
 | `.env.example` | Template for `.env`, which holds the database password and settings. `.env` is git-ignored so secrets never get committed. |
 | `db/init.sql` | Creates the `reviews` table, adds the sentiment columns, and creates the `review_topics`, `game_updates`, `update_review_days` and `gap_weeks` tables. Runs automatically on a brand-new database and is safe to re-run on an existing one. |
-| `backend/app/main.py` | The API: twelve endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
+| `backend/app/main.py` | The API: thirteen endpoints, CORS, input validation, and turning errors into the right HTTP status codes. |
 | `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors, or for one day or one week), reads a game's official news, searches the store by name, and reads the periods Valve flagged as off-topic review activity with how many reviews they leave out. All share one retry function that respects rate limits and rejects answers that aren't JSON objects. |
 | `backend/app/offtopic.py` | Puts together a game's flagged off-topic periods and the counts of reviews each leaves out, and caches the answer for an hour. |
 | `backend/app/updates.py` | Game updates: which news posts count as updates, grouping updates less than 2 weeks apart, fetching the reviews around each one, and the before/after numbers. |
 | `backend/app/gaps.py` | Filling the trend chart's past year: finds weeks from 52 weeks ago (or the oldest stored week, if earlier) with fewer than 30 stored reviews and fetches the newest 100 reviews of each. |
-| `backend/app/shelf.py` | The front page's list of stored games with their sentiment split; looks up each game's name and cover on Steam the first time and keeps them in `game_details`. |
+| `backend/app/shelf.py` | The front page's list of stored games with their sentiment split; looks up each game's name and cover on Steam the first time and keeps them in `game_details`. Also one game's name and cover on its own (`game_details`), for a dashboard opened from its web address, stored or not. |
 | `backend/app/playtime.py` | The four playtime groups (under 2 h, 2–10 h, 10–50 h, 50 h+), their boundaries in minutes, and the 30-review minimum. Shared by the playtime endpoint and the review filter. |
 | `backend/app/search.py` | Game search on top of Steam's store search: a one-hour cache and the typo fallback. |
 | `backend/app/sentiment.py` | Cleans review text and scores it with the trained classifier, then turns the score into positive / neutral / negative. |
@@ -41,11 +41,12 @@ A learning guide to this project (the app's working name is SteamView): what eac
 | `backend/experiments/compare_models.py` | The model comparison experiment: VADER vs. a pretrained transformer vs. TF-IDF + logistic regression, on games held out from training. Writes `results.md`. |
 | `backend/experiments/requirements.txt` | The experiment's extra packages (VADER, PyTorch, transformers). The app and its Docker image don't use them. |
 | `backend/experiments/results.md` | The latest comparison report, written by the script. |
-| `backend/tests/` | 179 pytest tests: `test_api.py` (endpoints, including the playtime groups and filter), `test_gaps.py` (filling the trend chart's past year), `test_shelf.py` (the front page's game list and name lookups), `test_offtopic.py` (flagged periods, counts, cache and Steam errors), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
+| `backend/tests/` | 187 pytest tests: `test_api.py` (endpoints, including the playtime groups and filter), `test_gaps.py` (filling the trend chart's past year), `test_shelf.py` (the front page's game list, name lookups, and `/details`), `test_offtopic.py` (flagged periods, counts, cache and Steam errors), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
-| `frontend/src/App.tsx` | The page: the masthead with the search (large on the start page, a bar once a game is picked), loading the game's data, the fetch button, and which state to show (loading, not stored, error, ready). |
+| `frontend/src/App.tsx` | The page: the masthead with the search (large on the start page, a bar once a game is picked) and the title that links back to the front page, keeping the open game in step with the web address (Back, Forward, reload, pasted links), loading the game's data, the fetch button, and which state to show (loading, not stored, no such game, error, ready). |
+| `frontend/src/route.ts` | The web address in both directions: reads the app ID out of `/game/570/dota-2` (or decides it isn't a game's address) and builds that address from an ID and a name. |
 | `frontend/src/main.tsx` | Starts React and loads the two self-hosted fonts and the stylesheet. |
 | `frontend/src/fonts.d.ts` | One line telling TypeScript that the Big Shoulders font package can be imported (it ships CSS only, without type declarations). |
 | `frontend/src/api.ts` | Calls the API, mirrors its response shapes as TypeScript types, and turns failures into messages a person can act on. |
@@ -54,6 +55,7 @@ A learning guide to this project (the app's working name is SteamView): what eac
 | `frontend/src/components/` | `ThemeToggle` (the light / dark button in the bar, remembered on the device), `HomeShowcase` (the front page under the search: the wall of covers behind everything, the shelf of stored games, and the hovered game's art), `GameSearch` (the search box and dropdown, and the / and ⌘K shortcut), `SectionNav` (links to each section in the top bar, with the one being read underlined), `CountUp` (a number that counts up once, read out only at its final value), `GameHero` (the game's cover, name and Steam link at the top of its dashboard, plus the yin-yang logo), `SentimentSplit` (the sentiment donut with the negative and positive shares on either side, and the model-agreement bar), `TrendChart`, `GapFill` (the button under the weekly chart that fills its empty and thin weeks), `PlaytimeBreakdown` (Recommended vs. Not recommended for each playtime group), `TopicBreakdown` (the topic chart and example excerpts), `UpdateShifts` (before/after numbers around updates, and the button that fetches their reviews), `ReviewList`: one file per part of the page. |
 | `frontend/src/index.css` | All styling: color, type and surface tokens, the layout, the donut's load animation, and the phone/tablet/desktop breakpoints. |
 | `frontend/public/favicon.svg` | The browser-tab icon: the same yin-yang as the logo. |
+| `frontend/vercel.json` | One rule for hosting on Vercel: any address that isn't a real file gets `index.html`, so a pasted `/game/570/dota-2` loads the app instead of a 404. |
 | `frontend/package.json` | Frontend dependencies (React, Recharts, Vite, TypeScript, Oxlint) and scripts (`dev`, `build`, `lint`). |
 
 ### The `reviews` table
@@ -75,7 +77,7 @@ A learning guide to this project (the app's working name is SteamView): what eac
 
 ### The `game_details` table
 
-`(app_id, name, image_url, looked_up)`: each stored game's name and wide cover from Steam's store, for the front page. The reviews table only has app IDs, so without this every front-page visit would ask Steam for 20 names (4.3 s in a real run, against 0.06 s from the table).
+`(app_id, name, image_url, looked_up)`: a game's name and wide cover from Steam's store, for the front page and for dashboards opened from their web address (which can be games with no stored reviews). The reviews table only has app IDs, so without this every front-page visit would ask Steam for 20 names (4.3 s in a real run, against 0.06 s from the table).
 
 ### The `gap_weeks` table
 
@@ -153,6 +155,17 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 9. **The topic section** starts on the most-mentioned topic. Clicking a bar or a topic button shows that topic's praise and complaint excerpts.
 10. **Changing the filter or page** keeps the current reviews on screen, faded, until the new ones arrive, so nothing jumps.
 11. **The weekly chart asks for off-topic periods on its own** (`/offtopic`), after the rest has loaded. If Steam is down, only its note changes ("Couldn't check Steam…"); the rest of the dashboard is unaffected.
+
+### Web addresses: `/game/570/dota-2`
+
+1. **Opening a game** from the search or the shelf adds a history entry with `history.pushState`, so the address becomes `/game/570/dota-2` without reloading. The tab title becomes "Dota 2 · SteamView".
+2. **Back and Forward** fire a `popstate` event. `App` reads the app ID from the new address (`appIdFromPath` in `route.ts`) and shows that page; the dashboard loads as if the game had been picked.
+3. **Reloading or opening a pasted link** starts the app with the ID from the address. The search hands over a name and cover, but an address only has the ID, so `App` asks `GET /games/570/details`. That reads `game_details`, or Steam's store page the first time (and keeps the answer). The header shows a gray bar where the name goes until it arrives, while the dashboard loads at the same time.
+4. **The name in the address is only for people.** `/game/570`, `/game/570/` and `/game/570/old-name` all open Dota 2. Once the real name is known, the address is corrected with `history.replaceState`, which swaps the current entry rather than adding one, so Back doesn't step through the untidy version.
+5. **Something that isn't a page** (`/game/abc`, `/some/other/page`, an ID of 0 or past the API's limit) becomes `/`, the front page.
+6. **No such game** (`/details` answers 404, and no reviews are stored): "No game found", with a link to the front page. A removed game whose reviews are still stored still opens its dashboard, under "App 1234".
+7. **Steam or the API can't be reached:** the header shows "App 570" and the dashboard shows its usual error with "Try again", which retries the name too.
+8. **The title** (logo and "SteamView") is a link to `/`. A plain click switches to the front page in place and scrolls to the top; a middle click or ⌘/Ctrl-click opens a new tab, like any link.
 
 ### Checking off-topic periods: `GET /games/949230/offtopic`
 
@@ -291,6 +304,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Topics: all 8 always returned, most mentioned first, with counts rather than percentages** | The frontend can show "nobody mentions multiplayer" without guessing which topics exist, and computes shares from the counts and the total | Only topics with mentions; percentages from the API |
 | **Topic examples: up to 3 per side, most helpful votes first, then most confident; neutral never shown** | Helpful votes are other players vouching for a review; confidence breaks ties among the many reviews with no votes yet | Random examples; most recent; longest |
 | **`404` for a game with no reviews, empty list for a filter with no matches** | "This game isn't loaded" is an error; "no negative reviews" is a valid answer | Empty responses everywhere (the frontend couldn't tell the two apart) |
+| **`GET /games/{id}/details` for a game's name and cover** | An address only carries the ID, so a reloaded or shared dashboard needs the name from somewhere. It reuses the shelf's `game_details` table and Steam lookup, so it works for any game on Steam (not only stored ones) and asks Steam once per game. 404 when Steam has no store page, 502 when Steam fails (nothing saved, so the next visit tries again) | Adding the name to `/summary` (only works for stored games, and `/summary` 404s for the rest); putting the name in the address and trusting it (anyone could write `/game/570/anything`) |
 | **CORS for named origins from `.env`** | Only your frontend's address can call the API from a browser | `*` (any website could call it) |
 
 ### Choosing a sentiment model (experiment)
@@ -360,6 +374,10 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **The note explains hollow dots and the dashed line** | Says what each mark means, only when the chart has them. The fill button's text explains why weeks are thin: older reviews were only fetched around updates (for Silksong, Sep 30 to Nov 2025 and March 2026) | Leaving the marks unexplained |
 | **Short month labels ("Nov"), with the year on the first tick and on January** | "Nov 2025"-style labels were too wide, so the chart dropped whichever ones overlapped (Silksong's axis skipped Nov, Feb, Apr and Sep). Short labels all fit at desktop width | Fewer ticks (every second month) |
 | **Line chart's y-axis fixed at −1 to +1, with a line at 0** | Shows where sentiment really sits on the model's scale. A zoomed-in axis would make a 0.35 → 0.38 wobble look dramatic | Auto-scaled axis |
+| **A web address for each game: `/game/570/dota-2`** | Reload, Back, Forward and sharing a link all work. The ID is what's read; the name is for the person reading the link, so it's built from the current name and corrected if a link has an old one. Names are made address-safe (`Baldur's Gate 3` → `baldurs-gate-3`, accents and ™ dropped); a name with nothing usable, like 原神, leaves just `/game/{id}` | `/game/570` only (works, but says nothing to a person); the name alone (names change and aren't unique); `/?app=570` (fine, but reads as a search, not a page) |
+| **The browser's History API, no router library** | The app has two kinds of page, so `pushState`, one `popstate` listener and a 20-line `route.ts` cover it | React Router (a dependency and new concepts for two pages); hash addresses like `/#/game/570` (need no hosting rule, but look odd and the hash is already used by the section links) |
+| **The title links to the front page** | The usual expectation on any site, and the only way back besides the Back button. It's a real `<a href="/">`, so a new-tab click works; a plain click is handled in the app so nothing reloads | A separate "Home" button |
+| **A `vercel.json` rule sending every address to `index.html`** | On a static host, `/game/570/dota-2` isn't a file, so without the rule a shared link would 404. Vercel serves real files (the scripts, fonts, favicon) first, so the rule only catches the rest. Vite's dev server already does this | A `404.html` that redirects (a visible flash); hash addresses |
 | **Plain CSS with variables, no UI library** | Small, readable, nothing to learn beyond CSS; colors defined once | Tailwind; a component library like MUI |
 | **Results tagged with the request they answer** | "Loading" is derived (latest result isn't for the current request), and a slow old response can never overwrite a newer one | Setting a `loading` flag inside the effect (an extra render, and the linter warns about it) |
 | **`AbortController` on every request** | Searching again cancels the old request instead of racing it | Ignoring stale responses after they arrive |
@@ -393,6 +411,10 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 - `503`: our database is down.
 
 **Idempotent.** Doing it twice has the same effect as doing it once. Fetching the same game twice doesn't duplicate reviews.
+
+**Client-side routing.** The page never reloads when you move between the front page and a game. `history.pushState` changes the address and adds a history entry without asking the server for anything; `replaceState` changes it without adding one; Back and Forward fire `popstate`, and the app redraws to match the address. The server only sees the first visit, which is why it must answer every address with the same `index.html` (the "SPA fallback").
+
+**Slug.** The readable part of an address, like `dota-2` in `/game/570/dota-2`. Made from a name by lowercasing it and turning everything that isn't a letter or digit into hyphens.
 
 **Cursor pagination.** Steam doesn't let you ask for "page 7". Each response gives a bookmark (cursor) for where the next page starts.
 
@@ -876,3 +898,14 @@ Yes, and I checked the data before building it. Steam sends each review's develo
 - **The fix:** the app reads the flagged periods from the data behind Steam's store-page review chart. It counts what each one leaves out using Steam's summary numbers (682 English reviews for Cities: Skylines II, 427 negative). It shades the period on the weekly chart and says plainly that those reviews are missing.
 - **What I checked first:** the approach on a known case (Borderlands 2, April 2019: 0 reviews counted by default, 4,080 with off-topic reviews included), and whether any of our games had a period at all.
 
+**How does a game get its own web address in a single-page app?**
+- **Moving around:** opening a game calls `history.pushState`, which changes the address to `/game/570/dota-2` and adds a history entry without a reload. Back and Forward fire `popstate`, and the app reads the ID out of the address and shows that page.
+- **Loading a link cold:** the host answers every address with `index.html` (one rule in `vercel.json`; Vite's dev server does it already), and the app reads the ID from `window.location`. The address only has the ID, so a new endpoint, `GET /games/{id}/details`, supplies the name and cover from the same `game_details` table the front page uses.
+- **The name in the address** is decoration for people. Only the ID is read, and the address is corrected with `replaceState` once the real name is known, so an old link still works and Back doesn't step through the wrong version.
+- **Why no router library:** two kinds of page. React Router would be the right call with nested pages or many routes.
+
+**What can go wrong when someone pastes a link, and what does the page do?**
+- `/game/abc` or `/anything`: becomes `/`, the front page.
+- An ID Steam has no page for: "No game found" with a link home (tested with app 7).
+- Steam or the API down: the dashboard's usual error with "Try again", the header showing "App 570" until the name can be looked up. Tested by stopping the API container.
+- A game removed from the store but still stored: its dashboard still opens, under "App 1234", because reviews win over the missing store page.

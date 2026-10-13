@@ -241,6 +241,11 @@ export function getGames(signal?: AbortSignal) {
   return request<StoredGames>('/games', { signal })
 }
 
+/** A game's name and cover, for a dashboard opened from its web address. 404: Steam has no page for it. */
+export function getDetails(appId: number, signal?: AbortSignal) {
+  return request<SearchResult>(`/games/${appId}/details`, { signal })
+}
+
 export function getTrend(appId: number, signal?: AbortSignal) {
   return request<Trend>(`/games/${appId}/trend`, { signal })
 }

@@ -159,6 +159,27 @@ def list_games(conn: Annotated[psycopg.Connection, Depends(get_conn)]):
     return StoredGames(total_reviews=sum(g["total_reviews"] for g in games), games=games)
 
 
+# ---------- GET /games/{app_id}/details ----------
+
+class GameDetails(BaseModel):
+    app_id: int
+    name: str
+    image_url: str  # Steam's wide header image
+
+
+@app.get("/games/{app_id}/details", response_model=GameDetails)
+def get_game_details(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
+    """A game's name and cover, for a dashboard opened from its web address. Works for any game on
+    Steam, stored or not; looked up from Steam's store once, then kept in the database."""
+    try:
+        details = shelf.game_details(conn, app_id)
+    except SteamError as error:
+        raise HTTPException(502, f"Steam store error: {error}") from error
+    if details is None:
+        raise HTTPException(404, f"Steam has no store page for app {app_id}.")
+    return details
+
+
 # ---------- GET /games/{app_id}/summary ----------
 
 class Summary(BaseModel):

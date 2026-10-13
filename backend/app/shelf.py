@@ -1,5 +1,6 @@
 """
-The front page's shelf: every stored game with its sentiment split, most reviews first.
+The front page's shelf: every stored game with its sentiment split, most reviews first. Also one
+game's name and cover, for a dashboard opened straight from its web address.
 
 The reviews table only knows app IDs, so names and covers come from Steam's store details, looked
 up the first time a game appears and kept in game_details. If Steam can't be reached the game is
@@ -31,6 +32,7 @@ GAMES_SQL = """
     GROUP BY r.app_id, d.name, d.image_url
     ORDER BY count(*) DESC, r.app_id
 """
+DETAILS_SQL = "SELECT name, image_url FROM game_details WHERE app_id = %s"
 SAVE_SQL = """
     INSERT INTO game_details (app_id, name, image_url) VALUES (%s, %s, %s)
     ON CONFLICT (app_id) DO UPDATE SET name = EXCLUDED.name, image_url = EXCLUDED.image_url, looked_up = now()
@@ -62,3 +64,17 @@ def stored_games(conn: psycopg.Connection) -> list[dict]:
             "positive_pct": round(100 * positive / total, 1),
         })
     return games
+
+
+def game_details(conn: psycopg.Connection, app_id: int) -> dict | None:
+    """One game's name and cover: from the database if it was looked up before, otherwise from Steam
+    (and kept). None if Steam has no store page for it. Raises SteamError if Steam can't be reached."""
+    row = conn.execute(DETAILS_SQL, (app_id,)).fetchone()
+    if row is None:
+        row = steam.fetch_app_details(app_id)
+        if row is None:
+            return None
+        conn.execute(SAVE_SQL, (app_id, *row))
+        conn.commit()
+    name, image_url = row
+    return {"app_id": app_id, "name": name, "image_url": image_url or FALLBACK_IMAGE.format(app_id=app_id)}

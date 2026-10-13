@@ -4,8 +4,9 @@ import type { SearchResult } from '../api'
 // The top of a game's dashboard: its cover, name and Steam link. The cover is also blurred into a
 // wash across the top of the page, like the background art on a Steam store page, and into a much
 // fainter tint that stays behind the whole page as it scrolls, so each game's page keeps its colors.
-export function GameHero({ game, children }: { game: SearchResult; children: ReactNode }) {
-  const art = game.image_url ? ({ '--art': `url(${JSON.stringify(game.image_url)})` } as CSSProperties) : undefined
+// `game` is null while its name and cover are looked up (a dashboard opened from its web address).
+export function GameHero({ appId, game, children }: { appId: number; game: SearchResult | null; children: ReactNode }) {
+  const art = game?.image_url ? ({ '--art': `url(${JSON.stringify(game.image_url)})` } as CSSProperties) : undefined
   return (
     <>
       {art && <div className="page-ambient" style={art} aria-hidden="true" />}
@@ -13,12 +14,16 @@ export function GameHero({ game, children }: { game: SearchResult; children: Rea
       <section className="hero" aria-labelledby="game-name">
         <div className="hero-head">
           {/* hero-cover: a cover clicked on the front page's shelf moves into this spot (index.css) */}
-          {game.image_url && <img className="hero-cover" src={game.image_url} alt="" width={184} height={69} />}
+          {game?.image_url && <img className="hero-cover" src={game.image_url} alt="" width={184} height={69} />}
           <div className="hero-title">
-            <h2 id="game-name">{game.name}</h2>
-            <p className="game-id">App {game.app_id}</p>
+            {game ? (
+              <h2 id="game-name">{game.name}</h2>
+            ) : (
+              <div id="game-name" className="skeleton hero-name-skeleton" aria-label={`App ${appId}`} />
+            )}
+            <p className="game-id">App {appId}</p>
           </div>
-          <a className="hero-link" href={`https://store.steampowered.com/app/${game.app_id}`} target="_blank" rel="noreferrer">
+          <a className="hero-link" href={`https://store.steampowered.com/app/${appId}`} target="_blank" rel="noreferrer">
             View on Steam ↗
           </a>
         </div>
