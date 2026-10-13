@@ -28,16 +28,16 @@ export function GameHero({ game, children }: { game: SearchResult; children: Rea
   )
 }
 
-/** The logo: a yin-yang of the two sentiments, negative on the left and positive on the right, each
-    holding a dot of the other: most games have some of both. */
+/** The logo: a classic yin-yang in the page's own ink and panel colors (so it flips with the theme),
+    with the two sentiments only in the dots: negative in the light half, positive in the dark one. */
 export function SplitMark() {
   return (
     <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-      <circle cx="16" cy="16" r="15" fill="var(--sentiment-negative)" />
-      {/* Right half, with the S-curve: its top bulges right (into positive), its bottom bulges left */}
-      <path d="M16 1 A15 15 0 0 1 16 31 A7.5 7.5 0 0 1 16 16 A7.5 7.5 0 0 0 16 1 Z" fill="var(--sentiment-positive)" />
-      <circle cx="16" cy="8.5" r="2.4" fill="var(--sentiment-positive)" />
-      <circle cx="16" cy="23.5" r="2.4" fill="var(--sentiment-negative)" />
+      <circle cx="16" cy="16" r="15" fill="var(--panel)" stroke="var(--ink)" strokeWidth="1.2" />
+      {/* Right half, with the S-curve: its top bulges right, its bottom bulges left */}
+      <path d="M16 1 A15 15 0 0 1 16 31 A7.5 7.5 0 0 1 16 16 A7.5 7.5 0 0 0 16 1 Z" fill="var(--ink)" />
+      <circle cx="16" cy="8.5" r="2.6" fill="var(--sentiment-negative)" />
+      <circle cx="16" cy="23.5" r="2.6" fill="var(--sentiment-positive)" />
     </svg>
   )
 }
