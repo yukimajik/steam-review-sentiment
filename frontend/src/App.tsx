@@ -12,6 +12,7 @@ import { TopicBreakdown } from './components/TopicBreakdown'
 import { ChartSkeleton, TrendChart } from './components/TrendChart'
 import { UpdateShifts } from './components/UpdateShifts'
 import { SectionNav } from './components/SectionNav'
+import { HomeShowcase } from './components/HomeShowcase'
 import { formatCount } from './format'
 
 const FETCH_COUNT = 1000 // reviews to fetch when a game isn't stored yet
@@ -96,7 +97,7 @@ export default function App() {
           <SplitMark />
           <div>
             <h1>Steam Review Sentiment</h1>
-            <p className="tagline">How players feel about a game, from the text of their Steam reviews.</p>
+            <p className="tagline">How players feel about a game, from what they write in their Steam reviews.</p>
           </div>
         </div>
         {/* Disabled while fetching, so the result can't land on a different game */}
@@ -106,11 +107,7 @@ export default function App() {
 
       <main>
         {game === null || appId === null ? (
-          <p className="intro">
-            Pick a game to see how its reviews split between positive and negative, how that changed week by week and
-            around updates, how it differs by playtime, what players praise and complain about, and the reviews behind
-            it.
-          </p>
+          <HomeShowcase onPick={pickGame} />
         ) : (
           <>
             {/* The ids are what the section links in the bar scroll to */}
@@ -200,15 +197,29 @@ export default function App() {
       </main>
 
       <footer className="page-footer">
-        <p>
-          Sentiment labels come from a classifier (TF-IDF + logistic regression) trained on Steam reviews to predict
-          whether the player recommends the game; “neutral” means it isn’t confident either way. “Model agreement” is how
-          often its label matches the player’s own thumbs up or down, with neutral counting as a miss. Topics are found
-          with keyword lists, so reviews that describe a topic in other words are missed; each topic’s praise or
-          complaint comes from the model scoring only the sentences about it. Updates come from each game’s official
-          Steam news; the before/after numbers are comparisons, not proof that an update changed anything.
-        </p>
+        {/* On the front page the method notes fold away; on a dashboard they stay open */}
+        {game === null ? (
+          <details>
+            <summary>How the numbers work</summary>
+            <MethodNotes />
+          </details>
+        ) : (
+          <MethodNotes />
+        )}
       </footer>
     </div>
+  )
+}
+
+function MethodNotes() {
+  return (
+    <p>
+      Sentiment labels come from a classifier (TF-IDF + logistic regression) trained on Steam reviews to predict
+      whether the player recommends the game; “neutral” means it isn’t confident either way. “Model agreement” is how
+      often its label matches the player’s own thumbs up or down, with neutral counting as a miss. Topics are found
+      with keyword lists, so reviews that describe a topic in other words are missed; each topic’s praise or
+      complaint comes from the model scoring only the sentences about it. Updates come from each game’s official
+      Steam news; the before/after numbers are comparisons, not proof that an update changed anything.
+    </p>
   )
 }

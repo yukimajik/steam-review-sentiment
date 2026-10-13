@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
-from app import db, gaps, offtopic, playtime, search, steam, topics, updates
+from app import db, gaps, offtopic, playtime, search, shelf, steam, topics, updates
 from app.steam import SteamError, SteamRateLimited, fetch_reviews, to_row
 
 MAX_FETCH = 5000  # the fetch request waits until done, so cap how long that can take
@@ -132,6 +132,31 @@ def fetch_game(
 
     scored = db.score_reviews(conn, app_id=app_id)
     return FetchResult(app_id=app_id, fetched=fetched, new=new, scored=scored)
+
+
+# ---------- GET /games ----------
+
+class StoredGame(BaseModel):
+    app_id: int
+    name: str | None   # None until Steam's store details could be looked up
+    image_url: str     # Steam's wide header image
+    total_reviews: int
+    negative_pct: float
+    neutral_pct: float
+    positive_pct: float
+
+
+class StoredGames(BaseModel):
+    total_reviews: int        # across every stored game
+    games: list[StoredGame]   # most reviews first
+
+
+@app.get("/games", response_model=StoredGames)
+def list_games(conn: Annotated[psycopg.Connection, Depends(get_conn)]):
+    """Every game with scored reviews, for the front page. Names and covers come from Steam's store
+    the first time a game is listed (about a third of a second each), then from the database."""
+    games = shelf.stored_games(conn)
+    return StoredGames(total_reviews=sum(g["total_reviews"] for g in games), games=games)
 
 
 # ---------- GET /games/{app_id}/summary ----------

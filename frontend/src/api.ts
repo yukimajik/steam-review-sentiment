@@ -14,6 +14,21 @@ export interface Summary {
   baseline_pct: number // what always guessing the more common vote would score
 }
 
+export interface StoredGame {
+  app_id: number
+  name: string | null // null until Steam's store details could be looked up
+  image_url: string // Steam's wide header image
+  total_reviews: number
+  negative_pct: number
+  neutral_pct: number
+  positive_pct: number
+}
+
+export interface StoredGames {
+  total_reviews: number // across every stored game
+  games: StoredGame[] // most reviews first
+}
+
 export interface TrendWeek {
   week: string // the Monday it starts on, "2026-09-21"
   avg_compound: number // -1 to +1
@@ -218,6 +233,11 @@ export function searchGames(query: string, signal?: AbortSignal) {
 
 export function getSummary(appId: number, signal?: AbortSignal) {
   return request<Summary>(`/games/${appId}/summary`, { signal })
+}
+
+/** Every stored game with its sentiment split, for the front page. */
+export function getGames(signal?: AbortSignal) {
+  return request<StoredGames>('/games', { signal })
 }
 
 export function getTrend(appId: number, signal?: AbortSignal) {

@@ -12,7 +12,8 @@
   --guide: rgba(20, 26, 24, 0.07); /* the faint vertical lines down the page edges */
   --shadow: 0 1px 2px rgba(20, 26, 24, 0.04), 0 18px 40px -20px rgba(20, 26, 24, 0.18);
   --shadow-pop: 0 16px 40px rgba(20, 26, 24, 0.18); /* dropdowns and tooltips */
-  --art-opacity: 0.38;             /* the game's blurred cover behind its header */
+  --page-art-opacity: 0.5;         /* the game's blurred cover across the top of its dashboard */
+  --collage-opacity: 0.55;         /* the wall of covers behind the front page */
 
   /* Text: ink for what matters, muted for everything that explains it.
      Contrast on --ground / --panel: ink 15.4 / 17.0, ink-2 5.9 / 6.6, ink-3 4.8 / 5.3 */
@@ -60,7 +61,8 @@
     --guide: rgba(255, 255, 255, 0.05);
     --shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 24px 48px -24px rgba(0, 0, 0, 0.7);
     --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55);
-    --art-opacity: 0.3;
+    --page-art-opacity: 0.45;
+    --collage-opacity: 0.6;
 
     --ink: #eef1ef;
     --ink-2: #a1a9a5;
@@ -86,10 +88,11 @@
   box-sizing: border-box;
 }
 
+/* No background of its own: the page color is on :root, so the front page's cover wall
+   (z-index -1) can show through */
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--ground);
 }
 
 h1, h2, h3, h4, p {
@@ -286,6 +289,7 @@ main {
 }
 
 .is-home .brand h1 {
+  max-width: 7em; /* "Steam Review / Sentiment" on two lines */
   font-size: clamp(3rem, 10vw, 6.75rem);
   line-height: 0.88;
 }
@@ -306,6 +310,176 @@ main {
   max-width: 60ch;
   font-size: 1.125rem;
   color: var(--ink-2);
+}
+
+/* ---------- Front page: stored games' covers behind everything, and a shelf of them ---------- */
+.home-art {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* A tilted wall of covers, lightly blurred and faded */
+.collage {
+  position: absolute;
+  inset: -20% -10%;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 14px;
+  transform: rotate(-8deg);
+  opacity: 0;
+  transition: opacity 0.6s;
+}
+
+.collage.is-ready {
+  opacity: var(--collage-opacity);
+}
+
+.collage img {
+  width: 100%;
+  aspect-ratio: 460 / 215;
+  object-fit: cover;
+  border-radius: 8px;
+  filter: blur(3px) saturate(1.2);
+}
+
+/* The hovered game's cover, large and soft, over the wall */
+.focus-art {
+  position: absolute;
+  inset: -60px;
+  background: var(--art, none) center / cover no-repeat;
+  filter: blur(48px) saturate(1.4);
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+
+.focus-art.is-on {
+  opacity: 0.75;
+}
+
+/* Keeps the text readable over any art: see-through at the top, the page color by the bottom */
+.home-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--ground) 35%, transparent),
+    color-mix(in srgb, var(--ground) 75%, transparent) 50%,
+    var(--ground) 94%
+  );
+}
+
+.shelf {
+  margin-top: clamp(24px, 6vh, 48px);
+}
+
+.shelf-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  margin-bottom: 14px;
+}
+
+.shelf-head h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.5rem;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.shelf-head p {
+  font-size: 0.875rem;
+  color: var(--ink-3);
+}
+
+/* One row that scrolls sideways, snapping to each cover */
+.shelf-cards {
+  list-style: none;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 72%;
+  gap: 16px;
+  margin: -8px -6px 0;
+  padding: 8px 6px 18px; /* room for a cover to lift on hover without being cut off */
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+}
+
+.shelf-card {
+  scroll-snap-align: start;
+}
+
+.shelf-button {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shelf-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 460 / 215;
+  object-fit: cover;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--line), var(--shadow);
+  transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.shelf-button:hover .shelf-cover,
+.shelf-button:focus-visible .shelf-cover {
+  transform: translateY(-4px) scale(1.02);
+}
+
+/* Negative | neutral | positive, like the donut */
+.shelf-split {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+}
+
+.shelf-split span {
+  border-radius: 2px;
+}
+
+.shelf-split .is-neutral {
+  opacity: 0.45;
+}
+
+.shelf-name {
+  font-weight: 700;
+  font-size: 0.9375rem;
+  line-height: 1.25;
+}
+
+.shelf-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.page-footer summary {
+  width: fit-content;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.page-footer details p {
+  margin-top: 10px;
 }
 
 /* ---------- Buttons ---------- */
@@ -523,23 +697,53 @@ main {
   /* clip, not hidden: the blurred cover reaches past the edges, and a hidden box can still
      be scrolled sideways (by focus or find-in-page), shifting the whole header */
   overflow: clip;
-  background: var(--panel);
+  /* A little see-through, so the game's art behind the page shows through the header */
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  backdrop-filter: blur(24px) saturate(1.2);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow);
 }
 
-/* The game's cover, blurred into a wash of its colors behind the header */
-.hero::before {
+/* The game's cover, blurred into a wash across the top of the page that fades into the page color,
+   like the background art on a Steam store page. Full width and behind everything; scrolls away
+   with the page. */
+.page-art {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: -1;
+  height: 680px;
+  overflow: clip; /* the blur reaches past the edges; this keeps it from widening the page */
+  pointer-events: none;
+  mask-image: linear-gradient(#000 20%, transparent);
+}
+
+.page-art::before {
   content: '';
   position: absolute;
-  z-index: -1;
-  inset: -40px -40px auto;
-  height: 240px;
-  background: var(--art, none) center / cover;
-  filter: blur(44px) saturate(1.4);
-  opacity: var(--art-opacity);
-  mask-image: linear-gradient(#000 35%, transparent);
+  inset: -80px;
+  background: var(--art) center / cover;
+  filter: blur(64px) saturate(1.4);
+  opacity: var(--page-art-opacity);
+}
+
+/* A cover clicked on the front page's shelf moves into this spot (see HomeShowcase) */
+.hero-cover {
+  view-transition-name: game-cover;
+}
+
+::view-transition-group(game-cover) {
+  animation-duration: 500ms;
+  animation-timing-function: cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* The shelf cover and the header cover have different shapes; crop rather than stretch on the way */
+::view-transition-old(game-cover),
+::view-transition-new(game-cover) {
+  height: 100%;
+  object-fit: cover;
 }
 
 .hero-head {
@@ -803,6 +1007,15 @@ main {
   html {
     scroll-behavior: smooth;
   }
+
+  /* The front page's wall of covers drifts very slowly */
+  .collage.is-ready {
+    animation: drift 90s linear infinite alternate;
+  }
+}
+
+@keyframes drift {
+  to { translate: -12% -6%; }
 }
 
 @keyframes grow {
@@ -1358,6 +1571,12 @@ main {
   .spinner {
     animation: none;
   }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
 }
 
 /* ---------- Wider screens ---------- */
@@ -1386,6 +1605,10 @@ main {
   .topic-examples,
   .shift-columns {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .shelf-cards {
+    grid-auto-columns: clamp(180px, 22%, 240px);
   }
 
   .playtime-row {

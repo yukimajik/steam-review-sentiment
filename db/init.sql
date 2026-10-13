@@ -60,3 +60,12 @@ CREATE TABLE IF NOT EXISTS gap_weeks (
     week   DATE NOT NULL,  -- the Monday the week starts on (UTC)
     PRIMARY KEY (app_id, week)
 );
+
+-- Names and cover images of stored games, for the front page's shelf (backend/app/shelf.py).
+-- Looked up from Steam's store once per game and kept here, so the front page doesn't ask again.
+CREATE TABLE IF NOT EXISTS game_details (
+    app_id    INTEGER PRIMARY KEY,
+    name      TEXT NOT NULL,
+    image_url TEXT,                -- Steam's wide header image (460 x 215)
+    looked_up TIMESTAMPTZ NOT NULL DEFAULT now()
+);
