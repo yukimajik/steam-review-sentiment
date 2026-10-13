@@ -29,16 +29,17 @@ export interface StoredGames {
   games: StoredGame[] // most reviews first
 }
 
-export interface TrendWeek {
-  week: string // the Monday it starts on, "2026-09-21"
-  avg_compound: number // -1 to +1
+export interface TrendMonth {
+  month: string // its first day, "2026-09-01"
+  avg_compound: number // -1 to +1: the average of the month's weekly averages, so each week counts once
   review_count: number
+  weeks: number // weeks in the month that have reviews
 }
 
 export interface Trend {
   app_id: number
-  weeks: TrendWeek[] // only weeks with reviews; there can be gaps
-  weeks_to_fill: number // past weeks under 30 reviews that fillTrendGaps hasn't asked Steam about yet
+  months: TrendMonth[] // only months with reviews; there can be gaps
+  weeks_to_fill: number // weeks of the past year under 30 reviews that fillTrendGaps hasn't asked Steam about yet
 }
 
 export interface GapFillResult {

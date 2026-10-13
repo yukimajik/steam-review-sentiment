@@ -10,6 +10,11 @@ export const formatPct = (pct: number) => `${pct.toFixed(1)}%`
 export const formatScore = (score: number, digits = 2) => (score > 0 ? '+' : '') + score.toFixed(digits)
 
 /** "2026-09-21" -> "Sep 21, 2026". Read in UTC, so it's the same day in every time zone. */
+/** "October 2026", from a month's first day like "2026-10-01". */
+export function formatMonth(month: string): string {
+  return new Date(`${month}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
+
 export function formatDay(day: string): string {
   return new Date(`${day}T00:00:00Z`).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',

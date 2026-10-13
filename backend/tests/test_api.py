@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 import psycopg
 import pytest
 
-from app import db, updates
+from app import db, gaps, updates
 from app.main import app, get_conn
 from tests.helpers import FakeResponse, add_review, add_topic, steam_page, steam_review
 
@@ -125,22 +125,32 @@ def test_summary_unknown_game_returns_404(client):
 
 # ---------- GET /games/{app_id}/trend ----------
 
-def test_trend_averages_by_week(client, conn, monkeypatch):
+def test_trend_averages_by_month(client, conn, monkeypatch):
     monkeypatch.setattr(updates, "today", lambda: date(2026, 10, 26))
-    # Weeks run Monday to Sunday in UTC: Sep 21 2026 is a Monday, Sep 27 a Sunday
+    monkeypatch.setattr(gaps, "LOOKBACK_WEEKS", 0)  # only the stored range counts toward weeks_to_fill here
+    # Weeks run Monday to Sunday in UTC, and belong to the month their Thursday is in:
+    # the week of Mon Sep 28 has Thursday Oct 1, so it counts for October
     add_review(conn, 1, compound=0.5, created_at=datetime(2026, 9, 21, 0, 0, tzinfo=timezone.utc))
     add_review(conn, 2, compound=-0.1, created_at=datetime(2026, 9, 27, 23, 59, tzinfo=timezone.utc))
     add_review(conn, 3, compound=0.3, created_at=datetime(2026, 9, 28, 0, 0, tzinfo=timezone.utc))
-    add_review(conn, 4, compound=0.9, created_at=datetime(2026, 10, 19, tzinfo=timezone.utc))  # after an empty gap
+    add_review(conn, 4, compound=0.9, created_at=datetime(2026, 10, 19, tzinfo=timezone.utc))
 
     response = client.get("/games/620/trend")
 
     assert response.status_code == 200
-    assert response.json() == {"app_id": 620, "weeks": [
-        {"week": "2026-09-21", "avg_compound": 0.2, "review_count": 2},
-        {"week": "2026-09-28", "avg_compound": 0.3, "review_count": 1},
-        {"week": "2026-10-19", "avg_compound": 0.9, "review_count": 1},
+    assert response.json() == {"app_id": 620, "months": [
+        {"month": "2026-09-01", "avg_compound": 0.2, "review_count": 2, "weeks": 1},
+        {"month": "2026-10-01", "avg_compound": 0.6, "review_count": 2, "weeks": 2},
     ], "weeks_to_fill": 5}  # all five weeks are over and under 30 reviews, the empty Oct 5 and Oct 12 included
+
+
+def test_trend_counts_each_week_once_in_its_month(client, conn):
+    # Three reviews in one week, one in the next: pooled they'd average +0.6, but each week counts once
+    for review_id in (1, 2, 3):
+        add_review(conn, review_id, compound=0.9, created_at=datetime(2026, 9, 7, tzinfo=timezone.utc))
+    add_review(conn, 4, compound=-0.3, created_at=datetime(2026, 9, 14, tzinfo=timezone.utc))
+    month = client.get("/games/620/trend").json()["months"][0]
+    assert (month["avg_compound"], month["review_count"], month["weeks"]) == (0.3, 4, 2)
 
 
 def test_trend_unknown_game_returns_404(client):

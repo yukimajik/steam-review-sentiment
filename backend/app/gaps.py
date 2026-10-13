@@ -1,10 +1,13 @@
 """
-Filling the gaps in the weekly chart.
+Filling the trend chart's past year, one week at a time.
 
-Older reviews are only fetched around updates (updates.py), so the weeks between updates have
-none stored, and a week at the edge of a fetch can have only a few. Filling a week asks Steam for
-its newest 100 reviews: one request per week. That's a sample, not the whole week. A busy game
-gets around 100 English reviews a day, so its sample comes from the last day or so of the week.
+A first fetch stores only the newest 1,000 reviews, which a busy game gets through in a week or two
+(Stardew Valley gets about 770 English reviews a week). Older reviews are only fetched around
+updates, so the weeks between have none, and a week at the edge of a fetch can have only a few.
+Filling a week asks Steam for its newest 100 reviews: one request per week, from 52 weeks ago (or
+the oldest stored week, if that's earlier) up to last week. That's a sample, not the whole week:
+for a busy game it comes from the last day or so of the week, which measured no different on
+average (Silksong's daily averages ranged 0.443 to 0.472; Sundays 0.452).
 """
 
 import time
@@ -15,10 +18,11 @@ import psycopg
 from app import db, steam
 
 WEEKS_PER_REQUEST = 10  # one Steam request each, so a call takes about 15 seconds and the page can show progress
-MIN_REVIEWS = 30  # a week with fewer is a hollow dot on the chart (the frontend's MIN_WEEK_REVIEWS)
+MIN_REVIEWS = 30  # a week with fewer is filled
+LOOKBACK_WEEKS = 52  # the chart covers at least the past year, like the update comparison
 
-# Mondays (UTC) between the first and last week with stored reviews, for weeks that are over, have
-# fewer than MIN_REVIEWS stored, and haven't been filled yet. A filled week Steam has few or no
+# Mondays (UTC) from LOOKBACK_WEEKS ago (or the first stored week, if earlier) to the last stored
+# week, for weeks that are over, have fewer than MIN_REVIEWS stored, and haven't been filled yet. A filled week Steam has few or no
 # reviews for stays as it is. Same weeks and filter as the chart.
 WEEKS_TO_FILL_SQL = """
     WITH stored AS (
@@ -28,7 +32,9 @@ WEEKS_TO_FILL_SQL = """
         GROUP BY 1
     )
     SELECT g.week::date
-    FROM generate_series((SELECT min(week) FROM stored)::timestamp, (SELECT max(week) FROM stored)::timestamp,
+    FROM generate_series(least((SELECT min(week) FROM stored),
+                               date_trunc('week', %(today)s::date - %(lookback)s * interval '1 week')::date)::timestamp,
+                         (SELECT max(week) FROM stored)::timestamp,
                          interval '1 week') AS g(week)
     LEFT JOIN stored s ON s.week = g.week::date
     WHERE coalesce(s.reviews, 0) < %(min_reviews)s
@@ -41,7 +47,7 @@ MARK_WEEK_SQL = "INSERT INTO gap_weeks (app_id, week) VALUES (%s, %s) ON CONFLIC
 
 def weeks_to_fill(conn: psycopg.Connection, app_id: int, today: date) -> list[date]:
     """The Mondays of the weeks still to fill, newest first."""
-    params = {"app_id": app_id, "min_reviews": MIN_REVIEWS, "today": today}
+    params = {"app_id": app_id, "min_reviews": MIN_REVIEWS, "today": today, "lookback": LOOKBACK_WEEKS}
     return [row[0] for row in conn.execute(WEEKS_TO_FILL_SQL, params)]
 
 

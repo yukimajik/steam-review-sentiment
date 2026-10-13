@@ -26,7 +26,7 @@ A learning guide to this project (the app's working name is SteamView): what eac
 | `backend/app/steam.py` | Talks to Steam: fetches reviews (following page cursors, or for one day or one week), reads a game's official news, searches the store by name, and reads the periods Valve flagged as off-topic review activity with how many reviews they leave out. All share one retry function that respects rate limits and rejects answers that aren't JSON objects. |
 | `backend/app/offtopic.py` | Puts together a game's flagged off-topic periods and the counts of reviews each leaves out, and caches the answer for an hour. |
 | `backend/app/updates.py` | Game updates: which news posts count as updates, grouping updates less than 2 weeks apart, fetching the reviews around each one, and the before/after numbers. |
-| `backend/app/gaps.py` | Filling the gaps in the weekly chart: finds past weeks with fewer than 30 stored reviews (none at all, or only part of the week) and fetches the newest 100 reviews of each. |
+| `backend/app/gaps.py` | Filling the trend chart's past year: finds weeks from 52 weeks ago (or the oldest stored week, if earlier) with fewer than 30 stored reviews and fetches the newest 100 reviews of each. |
 | `backend/app/shelf.py` | The front page's list of stored games with their sentiment split; looks up each game's name and cover on Steam the first time and keeps them in `game_details`. |
 | `backend/app/playtime.py` | The four playtime groups (under 2 h, 2–10 h, 10–50 h, 50 h+), their boundaries in minutes, and the 30-review minimum. Shared by the playtime endpoint and the review filter. |
 | `backend/app/search.py` | Game search on top of Steam's store search: a one-hour cache and the typo fallback. |
@@ -41,7 +41,7 @@ A learning guide to this project (the app's working name is SteamView): what eac
 | `backend/experiments/compare_models.py` | The model comparison experiment: VADER vs. a pretrained transformer vs. TF-IDF + logistic regression, on games held out from training. Writes `results.md`. |
 | `backend/experiments/requirements.txt` | The experiment's extra packages (VADER, PyTorch, transformers). The app and its Docker image don't use them. |
 | `backend/experiments/results.md` | The latest comparison report, written by the script. |
-| `backend/tests/` | 176 pytest tests: `test_api.py` (endpoints, including the playtime groups and filter), `test_gaps.py` (filling the weekly chart's gaps), `test_shelf.py` (the front page's game list and name lookups), `test_offtopic.py` (flagged periods, counts, cache and Steam errors), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
+| `backend/tests/` | 179 pytest tests: `test_api.py` (endpoints, including the playtime groups and filter), `test_gaps.py` (filling the trend chart's past year), `test_shelf.py` (the front page's game list and name lookups), `test_offtopic.py` (flagged periods, counts, cache and Steam errors), `test_search.py` (game search), `test_steam.py` (retries and errors), `test_sentiment.py` (the classifier), `test_topics.py` (topic keywords and per-topic sentiment), `test_updates.py` (update detection, windows, and the update endpoints), plus shared setup in `conftest.py` and `helpers.py`. |
 | `backend/Dockerfile` | Recipe for the API's container image. |
 | `backend/requirements.txt` / `requirements-dev.txt` | Python packages for the app / extra ones for tests. |
 | `pytest.ini` | Tells pytest where the code and tests live. |
@@ -113,7 +113,7 @@ One row per review per topic it mentions. A review that mentions nothing has no 
 ### Reading: summary, trend, reviews
 
 - **Summary** runs one SQL query that counts everything at once (`count(*) FILTER (WHERE ...)`): totals per label, Recommended votes, and agreements. Python turns the counts into percentages.
-- **Trend** groups reviews by the week they were posted (Monday to Sunday, UTC) and averages the score. Weeks with no reviews are simply missing, and the chart shows them as gaps. It also returns `weeks_to_fill`: how many past weeks have fewer than 30 reviews and haven't been filled yet.
+- **Trend** averages each week's reviews (Monday to Sunday, UTC), then averages those weekly averages per month, so each week counts once however many of its reviews are stored. A week belongs to the month its Thursday is in, so it's never split. Months with no reviews are simply missing. It also returns `weeks_to_fill`: how many weeks of the past year have fewer than 30 reviews and haven't been filled yet.
 - **Reviews** runs two queries: one counts matching reviews (for page numbers), one fetches the requested page, newest first. It can filter by sentiment, by playtime group, or both.
 - **Playtime** runs one query. PostgreSQL's `width_bucket(playtime, ARRAY[120, 600, 3000])` turns each review's minutes into its group (0 = under 2 h … 3 = 50 h+, NULL = no playtime), and the query counts reviews and Recommended votes and averages the score per group. Python fills in empty groups and leaves out the percentages for groups under 30 reviews. The review filter uses the same `width_bucket` and boundaries, so the two can't disagree.
 - **Topics** runs three queries: the number of scored reviews; praise, neutral and complaint counts per topic; and the top 3 praise and complaint excerpts per topic, picked with a window function (`row_number() OVER (PARTITION BY topic, label ...)`). Python fills in zeros for topics nobody mentions and sorts by mentions.
@@ -129,9 +129,9 @@ One row per review per topic it mentions. A review that mentions nothing has no 
 6. **Rate limits.** If Steam keeps answering 429 after the usual retries, the API answers `429` with `Retry-After: 60`; the days already fetched are kept. The page waits a minute and carries on.
 7. **Comparing.** `GET /updates` reads only the database. For each group it counts reviews, averages the score, and works out the share of Recommended votes in the 14 days before and after, then ranks the 3 biggest rises and drops among updates with at least 30 reviews on each side.
 
-### Filling the weekly chart's gaps: `POST /games/{id}/trend/fill`
+### Filling the trend chart's past year: `POST /games/{id}/trend/fill`
 
-1. **Which weeks.** Every week between the first and last week with stored reviews that is over (not the current week), has fewer than 30 stored reviews, and isn't in `gap_weeks` yet. Newest first.
+1. **Which weeks.** Every week from 52 weeks ago (or the oldest stored week, if that's earlier) to the newest stored week that is over (not the current week), has fewer than 30 stored reviews, and isn't in `gap_weeks` yet. Newest first.
 2. **Reviews.** Up to 10 weeks per request. For each, one request asks Steam for that week's reviews (Monday 00:00 to Sunday 23:59:59 UTC), newest first, up to 100. They're saved like any others and the week is recorded in `gap_weeks`, with a 1-second pause between requests. Then the new reviews are scored and topic-tagged.
 3. **Response.** `{"filled_weeks": 10, "new_reviews": 972, "remaining": 28}` (a real run for Black Myth: Wukong, 14.3 s). The page calls again until `remaining` is 0.
 4. **Errors.** Same as the update fetch: `429` with `Retry-After: 60` when Steam rate limits, `502` for other Steam failures. Weeks already filled are kept and scored either way.
@@ -254,7 +254,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Hatched band** | Distinct from the blue and red tints above and below zero, and readable without color | A solid gray band |
 | **Only event type 0** | The only type seen, and it matched Borderlands 2's known period | Showing every event type (unknown meanings) |
 
-### Filling the weekly chart's gaps
+### Filling the trend chart's past year
 
 | Choice | Why | Alternatives |
 |---|---|---|
@@ -263,7 +263,7 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Every past week under 30 reviews, not only empty ones** | Testing all stored games found weeks only partly stored, at the edge of an update window or of the newest fetch: Silksong's Sep 14, 2026 had 1 stored review while Steam has 342; Wallpaper Engine 27 of 434; Starfield 19 of 90; PAYDAY 3 12 of 41. Filling only empty weeks left them as breaks. The cost: a quiet game asks about weeks that were already complete. Bread & Fred's 134 weeks took 134 requests and added 18 reviews, once | Only empty weeks (missed the partly stored ones); checking Steam's count for each week first (the same number of requests) |
 | **Remember filled weeks in `gap_weeks`** | A week Steam has few or no reviews for stays under 30; without the table it would be asked about again on every fill, and the button would never go away | Deciding from the reviews alone |
 | **10 weeks per request, the page loops** | Each request stays around 15 s and the page can show progress, the same pattern as the update fetch | One request for every week (about a minute with no progress) |
-| **Only within the stored range, and only weeks that are over** | Fills holes; the current week is still collecting reviews, so it's left alone; doesn't stretch the chart further back than the data already goes | Filling back to the game's release (years of requests for old games) |
+| **The past year, and only weeks that are over** | A first fetch stores the newest 1,000 reviews, which a busy game gets through in 1–3 weeks: 10 of 20 stored games (Stardew Valley, Elden Ring, Rust…) had 2–4 weekly points. The fill now reaches back 52 weeks, the same year the update comparison covers; a game stored further back (Bread & Fred, to 2024) keeps its own range. The current week is still collecting reviews, so it's left alone | Only filling holes inside the stored range (the first version, which did nothing for those 10 games); fetching every review of the year (Stardew: ~40,000 reviews, ~400 requests, about 9–10 minutes per game) |
 | **Filled reviews count everywhere, not just in the chart** | They're ordinary stored reviews, so the totals, playtime groups, topics and review list include them. Wukong went from 2,131 to 5,902 stored reviews and Silksong from 8,119 to 11,819 | Keeping them out of everything but the chart (a flag on every query) |
 
 ### Playtime
@@ -354,7 +354,8 @@ They call the same `app` functions as the API, so there's one copy of the logic.
 | **Sections with a heading column on wide screens** | Each section has a long note on how to read it; a 220 px column beside the chart holds it, and stays in view (`position: sticky`) while a long section like the review list scrolls past. On phones it stacks above | Heading and note above every chart (pushes charts down) |
 | **Weekly chart: line in ink, faint cobalt above zero and vermilion below** | A single line has no "side", so it's drawn in ink; the tints and their labels ("Leans Recommended" / "Leans Not recommended") say what each half means | A blue line (blue now means positive) |
 | **Data tables under the charts** | Every number is readable without hovering | Tooltips only (hidden on touch screens and to screen readers) |
-| **Weeks with fewer than 30 reviews are hollow dots, off the solid line** | Hollow Knight: Silksong's week of Sep 14, 2026 had 1 review scored 0.000, and joining it to the next week (+0.49, 358 reviews) drew a cliff that wasn't real. 30 is the same minimum as the playtime groups and the update comparison. The tooltip and data table still show every week | Joining every week with the same line (one review can draw a cliff); hiding small weeks (loses data) |
+| **The trend chart is by month, and a month is the average of its weeks** | With a year of weekly samples, a month holds about 4 samples of 100, so its average is steadier than a week's (about ±0.03 on the −1 to +1 scale, against ±0.07 for one week of Stardew Valley) and the chart reads as a year at a glance. Averaging weekly averages, not pooling reviews, matters because weeks were fetched differently: a week around an update has up to 700 stored reviews, a sampled week 100, and pooling would let the first drown out the second. Weeks belong to the month their Thursday is in, the ISO rule | Weekly points (noisier, 52 of them); pooling every review in the month (biased toward weeks fetched in full); a rolling average (smooths, adds no history) |
+| **Months with fewer than 30 reviews are hollow dots, off the solid line** | First added when the chart was weekly: Hollow Knight: Silksong's week of Sep 14, 2026 had 1 review scored 0.000, and joining it to the next week (+0.49, 358 reviews) drew a cliff that wasn't real. 30 is the same minimum as the playtime groups and the update comparison. The tooltip and data table still show every month | Joining every point with the same line (one review can draw a cliff); hiding small months (loses data) |
 | **A faint dashed line joins every week that has reviews** | Where Steam itself has under 30 reviews a week (Battlefield 2042, parts of PAYDAY 3, nearly all of Bread & Fred), no fetch can make the week solid, and hollow dots alone broke the line into pieces. The dashed line, drawn under the solid one, keeps it continuous while still looking less certain; it also crosses weeks with no reviews | Keeping the breaks; drawing quiet games by month instead of week (a bigger change) |
 | **The note explains hollow dots and the dashed line** | Says what each mark means, only when the chart has them. The fill button's text explains why weeks are thin: older reviews were only fetched around updates (for Silksong, Sep 30 to Nov 2025 and March 2026) | Leaving the marks unexplained |
 | **Short month labels ("Nov"), with the year on the first tick and on January** | "Nov 2025"-style labels were too wide, so the chart dropped whichever ones overlapped (Silksong's axis skipped Nov, Feb, Apr and Sep). Short labels all fit at desktop width | Fewer ticks (every second month) |
@@ -648,7 +649,7 @@ All from read-only requests to Steam on October 12, 2026.
 - The update comparison has the same blind spot: days inside a flagged period come back empty from Steam, so a before/after window there is undercounted.
 - The periods come from undocumented data, so Steam could change it.
 
-### Filling the weekly chart's gaps
+### Filling the trend chart's gaps and past year
 
 Real runs on October 12, 2026:
 - **Black Myth: Wukong:** 38 empty weeks filled, 3,771 reviews (84–100 per week). The first 10 weeks took 14.3 s; the rest ran through the page's button. Each sample covers the last 4.9 days of its week on average.
@@ -660,6 +661,13 @@ Real runs on October 12, 2026:
 - **Partly stored weeks:** Steam's own weekly counts showed weeks we had only part of. Silksong's Sep 14, 2026: 1 stored, 342 on Steam. Wallpaper Engine: 27 of 434. Starfield: 19 of 90. PAYDAY 3: 12 of 41 and 13 of 33, plus 2 empty weeks Steam had 47 and 33 for. So the fill was extended to every past week under 30. Filling them added 99 (Silksong), 73 (Wallpaper Engine), 71 (Starfield) and 248 (PAYDAY 3, 16 weeks).
 - **Genuinely quiet weeks:** Battlefield 2042's 4 thin weeks have exactly as many reviews on Steam as we store (20–29), and Bread & Fred has 0–20 a week. Filling all 134 of Bread & Fred's weeks added only 18 reviews. These stay hollow dots, now joined by the faint dashed line.
 - After both changes, no stored game has a break in its weekly line.
+
+**Reaching back a year, charted by month** (October 13, 2026):
+- **Before:** 10 of 20 games had 2–4 weekly points, because a first fetch of 1,000 reviews covers only 1–3 weeks of a busy game. Steam's own counts for the past year: Stardew Valley 39,881 English reviews (about 770 a week), Elden Ring 35,742, Rust 45,724.
+- **Is a week's newest 100 a fair sample?** On days stored in full, Silksong's daily averages ranged from 0.443 to 0.472, with Sundays at 0.452, so the end of the week isn't different. Wukong's weekends were about 0.05 lower, on only 130–210 reviews a day. For a 100-review week the 95% margin is about ±0.07 (Stardew, score spread 0.347) to ±0.09 (Elden Ring).
+- **Stardew Valley through the page's button:** 49 weeks and 4,898 new reviews in about a minute, then 13 monthly points, October 2025 to October 2026.
+- **The other 16 games:** 622 weeks, 58,622 new reviews, 1,308 s in all, including 8 one-minute pauses when Steam rate limited. Stored reviews went from 50,081 to 113,601.
+- **After:** 19 of 20 games show 12–13 months with at least 30 reviews in every month. Cities: Skylines II stops at September because Steam leaves out its flagged off-topic period; Bread & Fred keeps its hollow months because Steam itself has under 30 reviews in them.
 
 ## 6. Interview questions
 
