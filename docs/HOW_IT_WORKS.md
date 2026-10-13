@@ -649,7 +649,7 @@ All from read-only requests to Steam on October 12, 2026.
 - The update comparison has the same blind spot: days inside a flagged period come back empty from Steam, so a before/after window there is undercounted.
 - The periods come from undocumented data, so Steam could change it.
 
-### Filling the weekly chart's gaps
+### Filling the trend chart's gaps and past year
 
 Real runs on October 12, 2026:
 - **Black Myth: Wukong:** 38 empty weeks filled, 3,771 reviews (84–100 per week). The first 10 weeks took 14.3 s; the rest ran through the page's button. Each sample covers the last 4.9 days of its week on average.
@@ -661,6 +661,13 @@ Real runs on October 12, 2026:
 - **Partly stored weeks:** Steam's own weekly counts showed weeks we had only part of. Silksong's Sep 14, 2026: 1 stored, 342 on Steam. Wallpaper Engine: 27 of 434. Starfield: 19 of 90. PAYDAY 3: 12 of 41 and 13 of 33, plus 2 empty weeks Steam had 47 and 33 for. So the fill was extended to every past week under 30. Filling them added 99 (Silksong), 73 (Wallpaper Engine), 71 (Starfield) and 248 (PAYDAY 3, 16 weeks).
 - **Genuinely quiet weeks:** Battlefield 2042's 4 thin weeks have exactly as many reviews on Steam as we store (20–29), and Bread & Fred has 0–20 a week. Filling all 134 of Bread & Fred's weeks added only 18 reviews. These stay hollow dots, now joined by the faint dashed line.
 - After both changes, no stored game has a break in its weekly line.
+
+**Reaching back a year, charted by month** (October 13, 2026):
+- **Before:** 10 of 20 games had 2–4 weekly points, because a first fetch of 1,000 reviews covers only 1–3 weeks of a busy game. Steam's own counts for the past year: Stardew Valley 39,881 English reviews (about 770 a week), Elden Ring 35,742, Rust 45,724.
+- **Is a week's newest 100 a fair sample?** On days stored in full, Silksong's daily averages ranged from 0.443 to 0.472, with Sundays at 0.452, so the end of the week isn't different. Wukong's weekends were about 0.05 lower, on only 130–210 reviews a day. For a 100-review week the 95% margin is about ±0.07 (Stardew, score spread 0.347) to ±0.09 (Elden Ring).
+- **Stardew Valley through the page's button:** 49 weeks and 4,898 new reviews in about a minute, then 13 monthly points, October 2025 to October 2026.
+- **The other 16 games:** 622 weeks, 58,622 new reviews, 1,308 s in all, including 8 one-minute pauses when Steam rate limited. Stored reviews went from 50,081 to 113,601.
+- **After:** 19 of 20 games show 12–13 months with at least 30 reviews in every month. Cities: Skylines II stops at September because Steam leaves out its flagged off-topic period; Bread & Fred keeps its hollow months because Steam itself has under 30 reviews in them.
 
 ## 6. Interview questions
 
