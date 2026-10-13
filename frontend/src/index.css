@@ -12,7 +12,7 @@
   --guide: rgba(20, 26, 24, 0.07); /* the faint vertical lines down the page edges */
   --shadow: 0 1px 2px rgba(20, 26, 24, 0.04), 0 18px 40px -20px rgba(20, 26, 24, 0.18);
   --shadow-pop: 0 16px 40px rgba(20, 26, 24, 0.18); /* dropdowns and tooltips */
-  --art-opacity: 0.38;             /* the game's blurred cover behind its header */
+  --page-art-opacity: 0.5;         /* the game's blurred cover across the top of its dashboard */
   --collage-opacity: 0.55;         /* the wall of covers behind the front page */
 
   /* Text: ink for what matters, muted for everything that explains it.
@@ -61,7 +61,7 @@
     --guide: rgba(255, 255, 255, 0.05);
     --shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 24px 48px -24px rgba(0, 0, 0, 0.7);
     --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55);
-    --art-opacity: 0.3;
+    --page-art-opacity: 0.45;
     --collage-opacity: 0.6;
 
     --ink: #eef1ef;
@@ -697,23 +697,53 @@ main {
   /* clip, not hidden: the blurred cover reaches past the edges, and a hidden box can still
      be scrolled sideways (by focus or find-in-page), shifting the whole header */
   overflow: clip;
-  background: var(--panel);
+  /* A little see-through, so the game's art behind the page shows through the header */
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  backdrop-filter: blur(24px) saturate(1.2);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow);
 }
 
-/* The game's cover, blurred into a wash of its colors behind the header */
-.hero::before {
+/* The game's cover, blurred into a wash across the top of the page that fades into the page color,
+   like the background art on a Steam store page. Full width and behind everything; scrolls away
+   with the page. */
+.page-art {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: -1;
+  height: 680px;
+  overflow: clip; /* the blur reaches past the edges; this keeps it from widening the page */
+  pointer-events: none;
+  mask-image: linear-gradient(#000 20%, transparent);
+}
+
+.page-art::before {
   content: '';
   position: absolute;
-  z-index: -1;
-  inset: -40px -40px auto;
-  height: 240px;
-  background: var(--art, none) center / cover;
-  filter: blur(44px) saturate(1.4);
-  opacity: var(--art-opacity);
-  mask-image: linear-gradient(#000 35%, transparent);
+  inset: -80px;
+  background: var(--art) center / cover;
+  filter: blur(64px) saturate(1.4);
+  opacity: var(--page-art-opacity);
+}
+
+/* A cover clicked on the front page's shelf moves into this spot (see HomeShowcase) */
+.hero-cover {
+  view-transition-name: game-cover;
+}
+
+::view-transition-group(game-cover) {
+  animation-duration: 500ms;
+  animation-timing-function: cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* The shelf cover and the header cover have different shapes; crop rather than stretch on the way */
+::view-transition-old(game-cover),
+::view-transition-new(game-cover) {
+  height: 100%;
+  object-fit: cover;
 }
 
 .hero-head {
@@ -1540,6 +1570,12 @@ main {
   .skeleton,
   .spinner {
     animation: none;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }
 

@@ -1,6 +1,8 @@
 import { useEffect, useState, type CSSProperties } from 'react'
+import { flushSync } from 'react-dom'
 import { getGames, isAbort, type SearchResult, type StoredGame, type StoredGames } from '../api'
 import { formatCount, formatPct, SENTIMENT_COLORS } from '../format'
+import { usePrefersReducedMotion } from '../motion'
 import { CountUp } from './CountUp'
 
 const WALL_SIZE = 48 // covers in the background collage; stored games repeat to fill it
@@ -11,6 +13,23 @@ const formatWhole = (n: number) => formatCount(Math.round(n))
 export function HomeShowcase({ onPick }: { onPick: (game: SearchResult) => void }) {
   const [state, setState] = useState<StoredGames | 'loading' | 'failed'>('loading')
   const [focusArt, setFocusArt] = useState<string | null>(null) // the hovered cover
+  const reduced = usePrefersReducedMotion()
+
+  // Opening a game from the shelf: its cover moves into the dashboard header's cover spot while the
+  // rest of the page cross-fades (the View Transitions API). Browsers without it, and people who ask
+  // for reduced motion, get the dashboard straight away.
+  function open(game: StoredGame, cover: HTMLImageElement | null) {
+    const show = () => {
+      onPick({ app_id: game.app_id, name: game.name ?? `App ${game.app_id}`, image_url: game.image_url })
+      window.scrollTo({ top: 0, behavior: 'instant' }) // the dashboard starts at its top, wherever the shelf was
+    }
+    if (reduced || !cover || !document.startViewTransition) {
+      show()
+      return
+    }
+    cover.style.viewTransitionName = 'game-cover' // only the clicked cover takes part
+    document.startViewTransition(() => flushSync(show))
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -65,7 +84,7 @@ export function HomeShowcase({ onPick }: { onPick: (game: SearchResult) => void 
               <li key={game.app_id} className="shelf-card">
                 <ShelfCard
                   game={game}
-                  onPick={onPick}
+                  onOpen={(cover) => open(game, cover)}
                   onFocus={() => setFocusArt(game.image_url)}
                   onBlur={() => setFocusArt(null)}
                 />
@@ -77,9 +96,9 @@ export function HomeShowcase({ onPick }: { onPick: (game: SearchResult) => void 
   )
 }
 
-function ShelfCard({ game, onPick, onFocus, onBlur }: {
+function ShelfCard({ game, onOpen, onFocus, onBlur }: {
   game: StoredGame
-  onPick: (game: SearchResult) => void
+  onOpen: (cover: HTMLImageElement | null) => void
   onFocus: () => void
   onBlur: () => void
 }) {
@@ -88,7 +107,7 @@ function ShelfCard({ game, onPick, onFocus, onBlur }: {
     <button
       type="button"
       className="shelf-button"
-      onClick={() => onPick({ app_id: game.app_id, name, image_url: game.image_url })}
+      onClick={(event) => onOpen(event.currentTarget.querySelector('img'))}
       onMouseEnter={onFocus}
       onMouseLeave={onBlur}
       onFocus={onFocus}
