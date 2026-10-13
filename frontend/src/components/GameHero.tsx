@@ -2,12 +2,13 @@ import type { CSSProperties, ReactNode } from 'react'
 import type { SearchResult } from '../api'
 
 // The top of a game's dashboard: its cover, name and Steam link. The cover is also blurred into a
-// wash across the top of the page, like the background art on a Steam store page, so each game's
-// page takes on its own colors.
+// wash across the top of the page, like the background art on a Steam store page, and into a much
+// fainter tint that stays behind the whole page as it scrolls, so each game's page keeps its colors.
 export function GameHero({ game, children }: { game: SearchResult; children: ReactNode }) {
   const art = game.image_url ? ({ '--art': `url(${JSON.stringify(game.image_url)})` } as CSSProperties) : undefined
   return (
     <>
+      {art && <div className="page-ambient" style={art} aria-hidden="true" />}
       {art && <div className="page-art" style={art} aria-hidden="true" />}
       <section className="hero" aria-labelledby="game-name">
         <div className="hero-head">
@@ -27,12 +28,16 @@ export function GameHero({ game, children }: { game: SearchResult; children: Rea
   )
 }
 
-/** The logo: a ring split at the top, negative on the left and positive on the right, like the donut. */
+/** The logo: a classic yin-yang in the page's own ink and panel colors (so it flips with the theme),
+    with the two sentiments only in the dots: negative in the light half, positive in the dark one. */
 export function SplitMark() {
   return (
     <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M14.4 4.1 A12 12 0 0 0 14.4 27.9" stroke="var(--sentiment-negative)" strokeWidth="6" fill="none" />
-      <path d="M17.6 4.1 A12 12 0 0 1 17.6 27.9" stroke="var(--sentiment-positive)" strokeWidth="6" fill="none" />
+      <circle cx="16" cy="16" r="15" fill="var(--panel)" stroke="var(--ink)" strokeWidth="1.2" />
+      {/* Right half, with the S-curve: its top bulges right, its bottom bulges left */}
+      <path d="M16 1 A15 15 0 0 1 16 31 A7.5 7.5 0 0 1 16 16 A7.5 7.5 0 0 0 16 1 Z" fill="var(--ink)" />
+      <circle cx="16" cy="8.5" r="2.6" fill="var(--sentiment-negative)" />
+      <circle cx="16" cy="23.5" r="2.6" fill="var(--sentiment-positive)" />
     </svg>
   )
 }

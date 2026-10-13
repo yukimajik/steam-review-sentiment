@@ -1,8 +1,9 @@
 /* ---------- Design tokens ----------
-   Light by default, dark when the system asks for it. Each theme has its own values (checked
-   for contrast and colorblind separation), not an automatic inversion. */
+   Light, or dark when <html data-theme="dark">: set before the page draws from a saved choice or
+   the system setting (index.html), and switched by the button in the bar (ThemeToggle). Each theme
+   has its own values (checked for contrast and colorblind separation), not an automatic inversion. */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   /* Surfaces: a pale chalk page, near-white panels raised on hairlines and a soft shadow */
   --ground: #eef0ec;
@@ -13,6 +14,7 @@
   --shadow: 0 1px 2px rgba(20, 26, 24, 0.04), 0 18px 40px -20px rgba(20, 26, 24, 0.18);
   --shadow-pop: 0 16px 40px rgba(20, 26, 24, 0.18); /* dropdowns and tooltips */
   --page-art-opacity: 0.5;         /* the game's blurred cover across the top of its dashboard */
+  --ambient-opacity: 0.16;         /* and the faint tint of it behind the rest of the page */
   --collage-opacity: 0.55;         /* the wall of covers behind the front page */
 
   /* Text: ink for what matters, muted for everything that explains it.
@@ -52,34 +54,34 @@
 /* Dark: near-black ground, panels a step lighter, separated by hairlines rather than shadow.
    Contrast on ground / panel: ink 16.9 / 15.9, ink-2 8.0 / 7.5, ink-3 5.7 / 5.3. The sentiment
    poles are lighter so they hold 3:1 on the dark panel (worst colorblind pair ΔE 12.0). */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ground: #0c0f0e;
-    --panel: #131716;
-    --skeleton: #1d2220;
-    --line: rgba(255, 255, 255, 0.08);
-    --guide: rgba(255, 255, 255, 0.05);
-    --shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 24px 48px -24px rgba(0, 0, 0, 0.7);
-    --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55);
-    --page-art-opacity: 0.45;
-    --collage-opacity: 0.6;
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --ground: #0c0f0e;
+  --panel: #131716;
+  --skeleton: #1d2220;
+  --line: rgba(255, 255, 255, 0.08);
+  --guide: rgba(255, 255, 255, 0.05);
+  --shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 24px 48px -24px rgba(0, 0, 0, 0.7);
+  --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --page-art-opacity: 0.45;
+  --ambient-opacity: 0.2;
+  --collage-opacity: 0.6;
 
-    --ink: #eef1ef;
-    --ink-2: #a1a9a5;
-    --ink-3: #858d89;
-    --grid: #222826;
-    --axis: #3b423f;
-    --critical: #f2735f;
-    --on-ink: #0c0f0e;
-    --tooltip-bg: #1f2523;
-    --tooltip-ink: #eef1ef;
-    --tooltip-ink-2: #a1a9a5;
-    --search-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a9a5' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='m20 20-4.2-4.2'/%3E%3C/svg%3E");
+  --ink: #eef1ef;
+  --ink-2: #a1a9a5;
+  --ink-3: #858d89;
+  --grid: #222826;
+  --axis: #3b423f;
+  --critical: #f2735f;
+  --on-ink: #0c0f0e;
+  --tooltip-bg: #1f2523;
+  --tooltip-ink: #eef1ef;
+  --tooltip-ink-2: #a1a9a5;
+  --search-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a9a5' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='m20 20-4.2-4.2'/%3E%3C/svg%3E");
 
-    --sentiment-negative: #e4582f;
-    --sentiment-neutral: #868c88;
-    --sentiment-positive: #6b8ff2;
-  }
+  --sentiment-negative: #e4582f;
+  --sentiment-neutral: #868c88;
+  --sentiment-positive: #6b8ff2;
 }
 
 *,
@@ -206,6 +208,44 @@ main {
   max-width: 440px;
 }
 
+/* In the bar, the search and the theme button sit together on the right */
+.page:not(.is-home) .masthead .search {
+  margin-left: auto;
+}
+
+/* ---------- Light / dark button ---------- */
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink-2);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.theme-toggle:hover {
+  color: var(--ink);
+  border-color: var(--axis);
+}
+
+/* On the front page it sits in the top corner, out of the title's way */
+.is-home .masthead {
+  position: relative;
+}
+
+.is-home .theme-toggle {
+  position: absolute;
+  top: 20px;
+  right: 0;
+}
+
 /* ---------- Section links in the bar ---------- */
 .section-nav {
   flex-basis: 100%;
@@ -289,7 +329,6 @@ main {
 }
 
 .is-home .brand h1 {
-  max-width: 7em; /* "Steam Review / Sentiment" on two lines */
   font-size: clamp(3rem, 10vw, 6.75rem);
   line-height: 0.88;
 }
@@ -729,6 +768,26 @@ main {
   opacity: var(--page-art-opacity);
 }
 
+/* Below the wash, a much fainter tint of the same cover stays behind the page while it scrolls, so
+   the lower sections keep the game's colors without anything to look at. Fixed, so it's drawn once
+   and scrolling only moves the page over it. */
+.page-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  overflow: clip;
+  pointer-events: none;
+}
+
+.page-ambient::before {
+  content: '';
+  position: absolute;
+  inset: -15%;
+  background: var(--art) center / cover;
+  filter: blur(90px) saturate(1.3);
+  opacity: var(--ambient-opacity);
+}
+
 /* A cover clicked on the front page's shelf moves into this spot (see HomeShowcase) */
 .hero-cover {
   view-transition-name: game-cover;
@@ -1039,7 +1098,7 @@ main {
   display: grid;
   gap: 16px;
   padding: 24px 16px;
-  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 92%, transparent); /* lets the game's faint tint through */
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow);
