@@ -204,16 +204,18 @@ def game_summary(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_
 
 # ---------- GET /games/{app_id}/trend and POST /games/{app_id}/trend/fill ----------
 
-class TrendWeek(BaseModel):
-    week: str            # the Monday the week starts on, e.g. "2026-09-21"
-    avg_compound: float  # average model score: -1 (likely Not recommended) to +1 (likely Recommended)
-    review_count: int    # so a week with a handful of reviews isn't read like one with hundreds
+class TrendMonth(BaseModel):
+    month: str           # the first day of the month, e.g. "2026-09-01"
+    avg_compound: float  # average model score, -1 (likely Not recommended) to +1 (likely Recommended),
+                         # of the month's weekly averages: each week counts the same however many reviews it has
+    review_count: int    # so a month with a handful of reviews isn't read like one with hundreds
+    weeks: int           # weeks in the month that have reviews
 
 
 class Trend(BaseModel):
     app_id: int
-    weeks: list[TrendWeek]  # only weeks with reviews; there can be gaps
-    weeks_to_fill: int      # past weeks under 30 reviews that POST .../trend/fill hasn't asked Steam about yet
+    months: list[TrendMonth]  # only months with reviews; there can be gaps
+    weeks_to_fill: int        # weeks of the past year under 30 reviews that POST .../trend/fill hasn't asked Steam about yet
 
 
 class GapFillResult(BaseModel):
@@ -223,13 +225,25 @@ class GapFillResult(BaseModel):
     remaining: int     # weeks still to fill; call again for the next ones
 
 
-# Weeks (Monday to Sunday) are in UTC so the result doesn't depend on the database server's time zone.
+# Average per week first (Monday to Sunday, in UTC so the result doesn't depend on the database's
+# time zone), then per month. Some weeks were fetched in full (the newest reviews, the days around
+# updates) and others are samples of 100 (trend/fill), so pooling reviews would let the full weeks
+# outweigh the rest; averaging the weekly averages counts each week once. A week belongs to the
+# month its Thursday is in, the ISO rule, so it's never split between two months.
 TREND_SQL = """
-    SELECT to_char(date_trunc('week', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD'),
-           avg(sentiment_compound),
+    WITH weekly AS (
+        SELECT date_trunc('week', created_at AT TIME ZONE 'UTC') AS week,
+               avg(sentiment_compound) AS avg_score,
+               count(*) AS reviews
+        FROM reviews
+        WHERE app_id = %s AND sentiment_label IS NOT NULL
+        GROUP BY 1
+    )
+    SELECT to_char(date_trunc('month', week + interval '3 days'), 'YYYY-MM-DD'),
+           avg(avg_score),
+           sum(reviews),
            count(*)
-    FROM reviews
-    WHERE app_id = %s AND sentiment_label IS NOT NULL
+    FROM weekly
     GROUP BY 1
     ORDER BY 1
 """
@@ -237,17 +251,18 @@ TREND_SQL = """
 
 @app.get("/games/{app_id}/trend", response_model=Trend)
 def game_trend(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
-    """Average sentiment for each week, by the date reviews were posted."""
+    """Average sentiment for each month, by the date reviews were posted."""
     rows = conn.execute(TREND_SQL, (app_id,)).fetchall()
     if not rows:
         raise no_reviews(app_id)
-    weeks = [TrendWeek(week=week, avg_compound=round(avg, 3), review_count=count) for week, avg, count in rows]
-    return Trend(app_id=app_id, weeks=weeks, weeks_to_fill=len(gaps.weeks_to_fill(conn, app_id, updates.today())))
+    months = [TrendMonth(month=month, avg_compound=round(avg, 3), review_count=count, weeks=weeks)
+              for month, avg, count, weeks in rows]
+    return Trend(app_id=app_id, months=months, weeks_to_fill=len(gaps.weeks_to_fill(conn, app_id, updates.today())))
 
 
 @app.post("/games/{app_id}/trend/fill", response_model=GapFillResult)
 def fill_trend_gaps(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
-    """Fill gaps in the weekly chart: for up to 10 past weeks with fewer than 30 stored reviews (newest
+    """Fill the trend chart's past year: for up to 10 past weeks with fewer than 30 stored reviews (newest
     first), fetch the newest 100 reviews of each week (one request per week, about 15 seconds in all).
     A sample, not the whole week. Call again until `remaining` is 0."""
     require_reviews(conn, app_id)

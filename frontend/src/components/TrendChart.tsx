@@ -3,96 +3,87 @@ import {
   CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
   type TooltipContentProps,
 } from 'recharts'
-import { ApiError, getOfftopic, isAbort, type Offtopic, type OfftopicPeriod, type TrendWeek } from '../api'
-import { formatCount, formatDay, formatScore } from '../format'
+import { ApiError, getOfftopic, isAbort, type Offtopic, type OfftopicPeriod, type TrendMonth } from '../api'
+import { formatCount, formatDay, formatMonth, formatScore } from '../format'
 import { usePrefersReducedMotion, useSeenOnce } from '../motion'
 import { GapFill } from './GapFill'
 
-const DAY_MS = 24 * 60 * 60 * 1000
-const WEEK_MS = 7 * DAY_MS
-// A week's average needs this many reviews to join the line; fewer are hollow dots. A single review
-// scored 0 made a cliff in Silksong's chart. Same minimum as the playtime groups and update comparison.
-const MIN_WEEK_REVIEWS = 30
+// A month's average needs this many reviews to join the solid line; fewer are hollow dots. A single
+// review scored 0 once made a cliff in Silksong's chart. Same minimum as the playtime groups and the
+// update comparison.
+const MIN_MONTH_REVIEWS = 30
 const NO_POINTS: Point[] = []
 
 interface Point {
-  x: number // the middle of the week, in milliseconds
-  week: string
-  avg_compound: number | null // null for a week with no reviews
-  solid: number | null // the average, if the week has enough reviews; null breaks the line
+  x: number // the middle of the month, in milliseconds
+  month: string
+  avg_compound: number | null // null for a month with no reviews
+  solid: number | null // the average, if the month has enough reviews; null breaks the line
   sparse: number | null // the average, if it has too few; drawn as a hollow dot
   review_count: number
+  weeks: number
 }
 
-const weekStart = (week: string) => Date.parse(`${week}T00:00:00Z`)
+const monthStart = (month: string) => Date.parse(`${month}T00:00:00Z`)
+const nextMonth = (t: number) => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) }
 
-/** One point per week from the first to the last, so weeks without reviews are bridged by the dashed join. */
-function toPoints(weeks: TrendWeek[]): Point[] {
-  const byWeek = new Map(weeks.map((w) => [w.week, w]))
+/** One point per month from the first to the last, so months without reviews are bridged by the dashed join. */
+function toPoints(months: TrendMonth[]): Point[] {
+  const byMonth = new Map(months.map((m) => [m.month, m]))
   const points: Point[] = []
-  for (let start = weekStart(weeks[0].week); start <= weekStart(weeks[weeks.length - 1].week); start += WEEK_MS) {
-    const week = new Date(start).toISOString().slice(0, 10)
-    const avg = byWeek.get(week)?.avg_compound ?? null
-    const count = byWeek.get(week)?.review_count ?? 0
-    const enough = count >= MIN_WEEK_REVIEWS
+  for (let t = monthStart(months[0].month); t <= monthStart(months[months.length - 1].month); t = nextMonth(t)) {
+    const month = new Date(t).toISOString().slice(0, 10)
+    const stored = byMonth.get(month)
+    const avg = stored?.avg_compound ?? null
+    const count = stored?.review_count ?? 0
+    const enough = count >= MIN_MONTH_REVIEWS
     points.push({
-      x: start + WEEK_MS / 2, week, avg_compound: avg, review_count: count,
+      x: (t + nextMonth(t)) / 2, month, avg_compound: avg, review_count: count, weeks: stored?.weeks ?? 0,
       solid: enough ? avg : null, sparse: enough ? null : avg,
     })
   }
   return points
 }
 
-/** Ticks at the start of each month for a long range, otherwise at the start of each week.
-    Month labels are short ("Nov"), with the year only on the first tick and on January, so they
-    fit; Recharts still drops ticks that would overlap, so narrow screens show fewer. */
-function ticksBetween(start: number, end: number): { ticks: number[]; format: (t: number) => string } {
+/** A label under each month's point: short ("Nov"), with the year on the first and on January.
+    Recharts drops labels that would overlap, so long ranges and narrow screens show fewer. */
+function monthTicks(points: Point[]): { ticks: number[]; format: (t: number) => string } {
+  const ticks = points.map((p) => p.x)
   const date = (t: number, options: Intl.DateTimeFormatOptions) =>
     new Date(t).toLocaleDateString('en-US', { ...options, timeZone: 'UTC' })
-  if (end - start > 10 * WEEK_MS) {
-    const ticks: number[] = []
-    const first = new Date(start)
-    for (let m = 1; ; m++) {
-      const t = Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + m, 1)
-      if (t > end) break
-      ticks.push(t)
-    }
-    const format = (t: number) =>
-      t === ticks[0] || new Date(t).getUTCMonth() === 0
-        ? date(t, { month: 'short', year: 'numeric' })
-        : date(t, { month: 'short' })
-    return { ticks, format }
-  }
-  const ticks: number[] = []
-  for (let t = start; t <= end; t += WEEK_MS) ticks.push(t)
-  return { ticks, format: (t) => date(t, { month: 'short', day: 'numeric' }) }
+  const format = (t: number) =>
+    t === ticks[0] || new Date(t).getUTCMonth() === 0
+      ? date(t, { month: 'short', year: 'numeric' })
+      : date(t, { month: 'short' })
+  return { ticks, format }
 }
 
 // `updateTimes`: when each game update was posted, in milliseconds, drawn as dashed lines.
-// `weeksToFill`: past weeks under 30 reviews not yet asked about; `onFilled` reloads the dashboard once they are.
-export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }: {
-  appId: number; weeks: TrendWeek[]; updateTimes: number[]; weeksToFill: number; onFilled: () => void
+// `weeksToFill`: weeks of the past year under 30 reviews, not yet asked about; `onFilled` reloads the
+// dashboard once they are.
+export function TrendChart({ appId, months, updateTimes, weeksToFill, onFilled }: {
+  appId: number; months: TrendMonth[]; updateTimes: number[]; weeksToFill: number; onFilled: () => void
 }) {
   const offtopic = useOfftopic(appId)
-  const points = useMemo(() => toPoints(weeks), [weeks]) // a new array each render would redraw the line
+  const points = useMemo(() => toPoints(months), [months]) // a new array each render would redraw the line
   const [chartRef, seen] = useSeenOnce<HTMLDivElement>()
   const reduced = usePrefersReducedMotion()
   // Empty until the chart is first on screen, so the line draws itself in from the left
   const shownPoints = seen || reduced ? points : NO_POINTS
-  const last = weeks[weeks.length - 1]
-  const start = weekStart(weeks[0].week)
+  const last = months[months.length - 1]
+  const start = monthStart(months[0].month)
   // Flagged periods during or after the stored reviews are drawn, and the axis stretches to show
   // them: Steam leaves their reviews out, so otherwise the line would just stop with no explanation
   const drawn = (offtopic?.data?.periods ?? [])
     .map((p) => ({ from: Math.max(Date.parse(p.start), start), to: Date.parse(p.end) }))
     .filter((p) => p.to > start)
-  const end = Math.max(weekStart(last.week) + WEEK_MS, ...drawn.map((p) => p.to))
-  const { ticks, format } = ticksBetween(start, end)
+  const end = Math.max(nextMonth(monthStart(last.month)), ...drawn.map((p) => p.to))
+  const { ticks, format } = monthTicks(points)
   const shownUpdates = updateTimes.filter((t) => t >= start && t <= end)
 
   const hasGaps = points.some((p) => p.review_count === 0)
   const hasSparse = points.some((p) => p.sparse !== null)
-  // Label only the most recent week on the line; the axis and tooltip carry the rest
+  // Label only the most recent month on the line; the axis and tooltip carry the rest
   const lastSolid = points.findLastIndex((p) => p.solid !== null)
   const renderEndLabel = ({ x, y, index }: { x?: number | string; y?: number | string; index?: number }) =>
     index === lastSolid && x != null && y != null ? (
@@ -104,13 +95,14 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
   return (
     <section className="section">
       <div className="section-head">
-        <h3>Average sentiment by week</h3>
+        <h3>Average sentiment by month</h3>
         <p className="note">
-          Model score from −1 (likely Not recommended) to +1 (likely Recommended), by review date
+          Model score from −1 (likely Not recommended) to +1 (likely Recommended), by review date. Each month is
+          the average of its weeks, so a week with many reviews stored doesn’t outweigh the rest
           {shownUpdates.length > 0 && '. Dashed lines mark game updates'}
           {drawn.length > 0 && '. Hatched areas mark periods Steam flagged as off-topic review activity'}.
-          {hasSparse && ` Hollow dots are weeks with fewer than ${MIN_WEEK_REVIEWS} reviews, too few to rely on.`}
-          {(hasSparse || hasGaps) && ' A faint dashed line joins every week that has reviews, so the line doesn’t break where the solid line stops.'}
+          {hasSparse && ` Hollow dots are months with fewer than ${MIN_MONTH_REVIEWS} reviews, too few to rely on.`}
+          {(hasSparse || hasGaps) && ' A faint dashed line joins every month that has reviews, so the line doesn’t break where the solid line stops.'}
         </p>
       </div>
       <div className="section-body">
@@ -118,9 +110,9 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
           className="trend"
           ref={chartRef}
           role="img"
-          aria-label={`Line chart of average sentiment by week${shownUpdates.length ? `, with ${shownUpdates.length} updates marked` : ''}` +
+          aria-label={`Line chart of average sentiment by month${shownUpdates.length ? `, with ${shownUpdates.length} updates marked` : ''}` +
             `${drawn.length ? `, and ${drawn.length} off-topic ${drawn.length === 1 ? 'period' : 'periods'} shaded` : ''}. ` +
-            `Most recent: week of ${formatDay(last.week)}, ${formatScore(last.avg_compound)}.`}
+            `Most recent: ${formatMonth(last.month)}, ${formatScore(last.avg_compound)}.`}
         >
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={shownPoints} margin={{ top: 24, right: 24, bottom: 0, left: -12 }}>
@@ -163,8 +155,8 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
                 <ReferenceLine key={time} x={time} stroke="var(--ink-3)" strokeDasharray="4 3" />
               ))}
               <Tooltip content={TrendTooltip} cursor={{ stroke: 'var(--axis)', strokeWidth: 1 }} />
-              {/* Every week with reviews, faint and dashed, under the solid line: where the solid line
-                  stops (a hollow dot or a week with none) this keeps the line from breaking */}
+              {/* Every month with reviews, faint and dashed, under the solid line: where the solid line
+                  stops (a hollow dot or a month with none) this keeps the line from breaking */}
               <Line
                 type="linear"
                 dataKey="avg_compound"
@@ -189,7 +181,7 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
                 isAnimationActive={!reduced}
                 animationDuration={900}
               />
-              {/* Weeks with too few reviews: hollow dots, joined only by the dashed line */}
+              {/* Months with too few reviews: hollow dots, joined only by the dashed line */}
               <Line
                 type="linear"
                 dataKey="sparse"
@@ -207,14 +199,15 @@ export function TrendChart({ appId, weeks, updateTimes, weeksToFill, onFilled }:
           <summary>Show data table</summary>
           <table>
             <thead>
-              <tr><th scope="col">Week of</th><th scope="col">Average score</th><th scope="col">Reviews</th></tr>
+              <tr><th scope="col">Month</th><th scope="col">Average score</th><th scope="col">Reviews</th><th scope="col">Weeks</th></tr>
             </thead>
             <tbody>
-              {weeks.map((w) => (
-                <tr key={w.week}>
-                  <td>{formatDay(w.week)}</td>
-                  <td>{formatScore(w.avg_compound)}</td>
-                  <td>{formatCount(w.review_count)}</td>
+              {months.map((m) => (
+                <tr key={m.month}>
+                  <td>{formatMonth(m.month)}</td>
+                  <td>{formatScore(m.avg_compound)}</td>
+                  <td>{formatCount(m.review_count)}</td>
+                  <td>{m.weeks}</td>
                 </tr>
               ))}
             </tbody>
@@ -273,15 +266,16 @@ function TrendTooltip({ active, payload }: TooltipContentProps) {
   const point = payload[0].payload as Point
   return (
     <div className="tooltip">
-      <span>Week of {formatDay(point.week)}</span>
+      <span>{formatMonth(point.month)}</span>
       {point.avg_compound === null ? (
         <span>No reviews stored</span>
       ) : (
         <>
           <strong>{formatScore(point.avg_compound)}</strong>
           <span>
-            {formatCount(point.review_count)} {point.review_count === 1 ? 'review' : 'reviews'}
-            {point.review_count < MIN_WEEK_REVIEWS && ', too few to rely on'}
+            {formatCount(point.review_count)} {point.review_count === 1 ? 'review' : 'reviews'} over{' '}
+            {point.weeks} {point.weeks === 1 ? 'week' : 'weeks'}
+            {point.review_count < MIN_MONTH_REVIEWS && ', too few to rely on'}
           </span>
         </>
       )}

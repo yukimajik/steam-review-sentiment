@@ -14,6 +14,8 @@ SEP_7, SEP_14, SEP_21, SEP_28 = date(2026, 9, 7), date(2026, 9, 14), date(2026, 
 @pytest.fixture(autouse=True)
 def fixed_today(monkeypatch):
     monkeypatch.setattr(updates, "today", lambda: TODAY)
+    # Most tests are about the stored range; the look-back gets its own test
+    monkeypatch.setattr(gaps, "LOOKBACK_WEEKS", 0)
 
 
 def monday(day: date, hour: int = 0) -> datetime:
@@ -56,6 +58,20 @@ def test_the_current_week_is_left_alone(conn):
     assert gaps.weeks_to_fill(conn, 620, TODAY) == [date(2026, 10, 5)]  # the empty week before it still counts
 
 
+def test_the_past_year_is_filled_back_from_the_first_stored_week(conn, monkeypatch):
+    monkeypatch.setattr(gaps, "LOOKBACK_WEEKS", 4)  # 4 weeks before Oct 12: from Sep 14
+    add_full_week(conn, SEP_28, 1)
+    add_full_week(conn, date(2026, 10, 5), 100)
+    assert gaps.weeks_to_fill(conn, 620, TODAY) == [SEP_21, SEP_14]
+
+
+def test_a_game_stored_further_back_than_a_year_keeps_its_own_range(conn, monkeypatch):
+    monkeypatch.setattr(gaps, "LOOKBACK_WEEKS", 2)  # from Sep 28, later than the first stored week
+    add_full_week(conn, SEP_7, 1)
+    add_full_week(conn, SEP_28, 100)
+    assert gaps.weeks_to_fill(conn, 620, TODAY) == [SEP_21, SEP_14]
+
+
 def test_only_weeks_inside_the_stored_range_count(conn):
     add_full_week(conn, SEP_7, 1)
     add_full_week(conn, SEP_14, 100)
@@ -86,7 +102,8 @@ def test_a_week_steam_has_no_reviews_for_is_not_asked_about_again(client, conn, 
     assert client.post("/games/620/trend/fill").json()["new_reviews"] == 0
 
     trend = client.get("/games/620/trend").json()
-    assert (len(trend["weeks"]), trend["weeks_to_fill"]) == (2, 0)  # the gap stays, but is done
+    weeks_with_reviews = sum(month["weeks"] for month in trend["months"])
+    assert (weeks_with_reviews, trend["weeks_to_fill"]) == (2, 0)  # the gap stays, but is done
     assert client.post("/games/620/trend/fill").json() == {
         "app_id": 620, "filled_weeks": 0, "new_reviews": 0, "remaining": 0}
     assert len(fake_steam.calls) == 2  # the second fill didn't ask Steam
