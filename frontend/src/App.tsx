@@ -15,6 +15,7 @@ import { SectionNav } from './components/SectionNav'
 import { HomeShowcase } from './components/HomeShowcase'
 import { formatCount } from './format'
 
+const APP_NAME = 'SteamView' // a working name; also the page title in index.html
 const FETCH_COUNT = 1000 // reviews to fetch when a game isn't stored yet
 const SLOW_LOAD_MS = 5000 // after this long, explain that the server may be waking up
 
@@ -96,7 +97,7 @@ export default function App() {
         <div className="brand">
           <SplitMark />
           <div>
-            <h1>Steam Review Sentiment</h1>
+            <h1>{APP_NAME}</h1>
             <p className="tagline">How players feel about a game, from what they write in their Steam reviews.</p>
           </div>
         </div>
