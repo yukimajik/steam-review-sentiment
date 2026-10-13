@@ -6,7 +6,7 @@ import {
 import { GameHero, SplitMark } from './components/GameHero'
 import { GameSearch } from './components/GameSearch'
 import { PlaytimeBreakdown } from './components/PlaytimeBreakdown'
-import { ReviewList } from './components/ReviewList'
+import { ReviewList, type ReviewRequest } from './components/ReviewList'
 import { SentimentSplit, SentimentSplitSkeleton } from './components/SentimentSplit'
 import { TopicBreakdown } from './components/TopicBreakdown'
 import { ChartSkeleton, TrendChart } from './components/TrendChart'
@@ -51,10 +51,14 @@ export default function App() {
   const [fetching, setFetching] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [slowKey, setSlowKey] = useState<string | null>(null) // the request that's taking a while
+  // The reviews a chart click asked for. `id` changes with every click, so the list starts fresh each time.
+  const [reviewRequest, setReviewRequest] = useState<{ appId: number; id: number; request: ReviewRequest } | null>(null)
 
   const known = details?.appId === appId ? details : null // null while the name is looked up
   const game: SearchResult | null = appId === null || known === null ? null
     : known.status === 'ready' ? known.game : { app_id: appId, name: `App ${appId}`, image_url: null }
+
+  const shownRequest = reviewRequest?.appId === appId ? reviewRequest : null
 
   const requestKey = `${appId}-${reloadKey}`
   const dashboard = loaded?.key === requestKey ? loaded : null // null while the current request is loading
@@ -87,6 +91,7 @@ export default function App() {
     const follow = () => {
       setAppId(appIdFromPath(window.location.pathname))
       setFetchError(null)
+      setReviewRequest(null)
     }
     window.addEventListener('popstate', follow)
     return () => window.removeEventListener('popstate', follow)
@@ -134,6 +139,7 @@ export default function App() {
     setAppId(picked.app_id)
     navigate(gamePath(picked.app_id, picked.name))
     setFetchError(null)
+    setReviewRequest(null)
     setReloadKey((key) => key + 1) // picking the same game again refreshes it
   }
 
@@ -145,6 +151,13 @@ export default function App() {
     navigate('/')
     setAppId(null)
     window.scrollTo({ top: 0, behavior: 'instant' })
+  }
+
+  // A click on part of a chart: the review list shows the reviews behind it, and the page scrolls there
+  function showReviews(request: ReviewRequest) {
+    if (appId === null) return
+    setReviewRequest((previous) => ({ appId, id: (previous?.id ?? 0) + 1, request }))
+    document.getElementById('reviews')?.scrollIntoView() // glides, unless reduced motion is asked for (index.css)
   }
 
   function tryAgain() {
@@ -191,7 +204,7 @@ export default function App() {
             <div id="overview" className="anchor">
               <GameHero appId={appId} game={game}>
                 {dashboard === null && <SentimentSplitSkeleton />}
-                {dashboard?.status === 'ready' && <SentimentSplit summary={dashboard.summary} />}
+                {dashboard?.status === 'ready' && <SentimentSplit summary={dashboard.summary} onShowReviews={showReviews} />}
               </GameHero>
             </div>
 
@@ -256,10 +269,11 @@ export default function App() {
                     updateTimes={dashboard.updates.updates.map((u) => Date.parse(u.posts[0].posted_at))}
                     weeksToFill={dashboard.trend.weeks_to_fill}
                     onFilled={() => setReloadKey((key) => key + 1)}
+                    onShowReviews={showReviews}
                   />
                 </div>
                 <div id="playtime" className="anchor">
-                  <PlaytimeBreakdown data={dashboard.playtime} />
+                  <PlaytimeBreakdown data={dashboard.playtime} onShowReviews={showReviews} />
                 </div>
                 <div id="updates" className="anchor">
                   <UpdateShifts
@@ -267,13 +281,14 @@ export default function App() {
                     appId={appId}
                     data={dashboard.updates}
                     onFetched={() => setReloadKey((key) => key + 1)}
+                    onShowReviews={showReviews}
                   />
                 </div>
                 <div id="topics" className="anchor">
-                  <TopicBreakdown key={`topics-${appId}`} data={dashboard.topics} />
+                  <TopicBreakdown key={`topics-${appId}`} data={dashboard.topics} onShowReviews={showReviews} />
                 </div>
                 <div id="reviews" className="anchor">
-                  <ReviewList key={appId} appId={appId} />
+                  <ReviewList key={`${appId}-${shownRequest?.id ?? 0}`} appId={appId} request={shownRequest?.request ?? null} />
                 </div>
               </div>
             )}

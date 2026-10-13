@@ -568,6 +568,21 @@ a.button-secondary { /* a link drawn as a button */
   cursor: not-allowed;
 }
 
+/* A button that looks like what it holds: the donut's numbers */
+.plain-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.donut-arc {
+  cursor: pointer;
+}
+
 .link-button {
   padding: 0;
   border: none;
@@ -912,6 +927,7 @@ a.button-secondary { /* a link drawn as a button */
 }
 
 .split-value {
+  display: block;
   font-family: var(--font-display);
   font-weight: 800;
   font-size: clamp(2.25rem, 9vw, 4.75rem);
@@ -1169,6 +1185,11 @@ a.button-secondary { /* a link drawn as a button */
   font-size: 0.8125rem;
 }
 
+.tooltip-hint {
+  margin-top: 2px;
+  font-size: 0.75rem;
+}
+
 .tooltip strong {
   font-size: 0.9375rem;
   color: var(--tooltip-ink);
@@ -1293,6 +1314,10 @@ a.button-secondary { /* a link drawn as a button */
   font-size: 0.9375rem;
 }
 
+.topic-read-all {
+  margin-top: 12px;
+}
+
 .excerpt .link-button {
   align-self: flex-start;
 }
@@ -1389,6 +1414,20 @@ a.button-secondary { /* a link drawn as a button */
   border-left: none;
 }
 
+button.playtime-half {
+  padding: 0;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  background: none;
+  cursor: pointer;
+}
+
+button.playtime-half:hover .playtime-bar,
+button.playtime-half:focus-visible .playtime-bar {
+  filter: brightness(1.15);
+}
+
 /* Rounded at the outer end, square where the two sides meet */
 .playtime-bar {
   height: 18px;
@@ -1440,6 +1479,45 @@ a.button-secondary { /* a link drawn as a button */
 
 .filter[aria-pressed='true'] .dot {
   box-shadow: 0 0 0 2px var(--ink), 0 0 0 3px var(--on-ink);
+}
+
+/* A filter a chart added to the review list (a month, a vote, a topic, an update's window), removable */
+.review-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-top: 12px;
+  padding: 4px 4px 4px 14px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-size: 0.875rem;
+  font-weight: 600;
+  animation: fade 300ms ease-out;
+}
+
+.review-scope-remove {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 1.125rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.review-scope-remove:hover {
+  background: color-mix(in srgb, var(--on-ink) 18%, transparent);
+}
+
+.section-head h3:focus {
+  outline: none; /* focused only so the next Tab continues in the list; not a control */
 }
 
 /* ---------- Reviews ---------- */

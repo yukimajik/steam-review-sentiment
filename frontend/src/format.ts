@@ -21,6 +21,22 @@ export function formatDay(day: string): string {
   })
 }
 
+/** "Aug 31 – Sep 27, 2026", or "Dec 29, 2025 – Feb 1, 2026" across a new year. Days like "2026-08-31", in UTC. */
+export function formatDayRange(start: string, end: string): string {
+  const sameYear = start.slice(0, 4) === end.slice(0, 4)
+  const first = new Date(`${start}T00:00:00Z`).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric', timeZone: 'UTC',
+  })
+  return `${first} – ${formatDay(end)}`
+}
+
+/** Moves a "2026-08-31"-style day by some number of days. */
+export function addDays(day: string, days: number): string {
+  const date = new Date(`${day}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
 /** ISO timestamp -> "Sep 22, 2026" */
 export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })

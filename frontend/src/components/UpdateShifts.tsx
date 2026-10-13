@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   ApiError, fetchUpdateReviews, isAbort, wait, type UpdateComparison, type Updates, type UpdateStatus,
 } from '../api'
-import { formatCount, formatDay, formatPct, formatScore, SENTIMENT_COLORS } from '../format'
+import { addDays, formatCount, formatDay, formatDayRange, formatPct, formatScore, SENTIMENT_COLORS } from '../format'
+import type { ShowReviews } from './ReviewList'
 
 const SECONDS_PER_UPDATE = 35 // measured: 28 requests to Steam take 33–36 s
 const RATE_LIMIT_PAUSE_MS = 60_000 // Steam's limit lifted within about a minute and a half in a real run
@@ -15,14 +16,31 @@ const STATUS_NOTES: Record<UpdateStatus, string> = {
   too_recent: 'The 2 weeks after aren’t over yet',
 }
 
+// The reviews in the window before or after an update (the update's own day is in neither)
+type ReadWindow = (update: UpdateComparison, side: 'before' | 'after') => void
+
 // Rendered with a key per game. `onFetched` reloads the dashboard once new reviews are stored.
-export function UpdateShifts({ appId, data, onFetched }: { appId: number; data: Updates; onFetched: () => void }) {
+// The review counts before and after each update show those reviews in the list below (`onShowReviews`).
+export function UpdateShifts({ appId, data, onFetched, onShowReviews }: {
+  appId: number; data: Updates; onFetched: () => void; onShowReviews: ShowReviews
+}) {
   const [progress, setProgress] = useState<{ done: number; total: number; paused?: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [noneFound, setNoneFound] = useState(false)
   const controller = useRef<AbortController | null>(null)
 
   useEffect(() => () => controller.current?.abort(), []) // leaving the game stops the fetching
+
+  const readWindow: ReadWindow = (update, side) => {
+    const days = data.window_days
+    const [start, end] = side === 'before'
+      ? [addDays(update.day, -days), addDays(update.day, -1)]
+      : [addDays(update.day, 1), addDays(update.day, days)]
+    onShowReviews({
+      scope: { start, end },
+      label: `${days} days ${side} the update of ${formatDay(update.day)} (${formatDayRange(start, end)})`,
+    })
+  }
 
   const waiting = data.updates.filter((u) => u.status === 'needs_reviews').length
   const ranked = data.updates.filter((u) => u.status === 'ready').length
@@ -128,8 +146,8 @@ export function UpdateShifts({ appId, data, onFetched }: { appId: number; data: 
             ) : (
               // Drops on the left and rises on the right, like negative and positive everywhere else
               <div className="shift-columns">
-                <ShiftList kind="drops" items={data.biggest_drops} />
-                <ShiftList kind="rises" items={data.biggest_rises} />
+                <ShiftList kind="drops" items={data.biggest_drops} readWindow={readWindow} />
+                <ShiftList kind="rises" items={data.biggest_rises} readWindow={readWindow} />
               </div>
             )}
             <details className="data-table">
@@ -150,7 +168,11 @@ export function UpdateShifts({ appId, data, onFetched }: { appId: number; data: 
                         <td>{scoreOrDash(u.before?.avg_score)}</td>
                         <td>{scoreOrDash(u.after?.avg_score)}</td>
                         <td>{scoreOrDash(u.shift)}</td>
-                        <td>{u.before && u.after ? `${formatCount(u.before.reviews)} / ${formatCount(u.after.reviews)}` : '–'}</td>
+                        <td>
+                          {u.before && u.after ? (
+                            <WindowLinks update={u} readWindow={readWindow} format={(before, after) => <>{before} / {after}</>} />
+                          ) : '–'}
+                        </td>
                         <td>{STATUS_NOTES[u.status]}</td>
                       </tr>
                     ))}
@@ -165,7 +187,7 @@ export function UpdateShifts({ appId, data, onFetched }: { appId: number; data: 
   )
 }
 
-function ShiftList({ kind, items }: { kind: 'rises' | 'drops'; items: UpdateComparison[] }) {
+function ShiftList({ kind, items, readWindow }: { kind: 'rises' | 'drops'; items: UpdateComparison[]; readWindow: ReadWindow }) {
   const color = SENTIMENT_COLORS[kind === 'rises' ? 'positive' : 'negative']
   return (
     <div>
@@ -177,14 +199,14 @@ function ShiftList({ kind, items }: { kind: 'rises' | 'drops'; items: UpdateComp
         <p className="empty">No ranked update had a {kind === 'rises' ? 'higher' : 'lower'} average after.</p>
       ) : (
         <ol className="shifts" style={{ '--mark': color } as CSSProperties}>
-          {items.map((u) => <ShiftItem key={u.day} update={u} />)}
+          {items.map((u) => <ShiftItem key={u.day} update={u} readWindow={readWindow} />)}
         </ol>
       )}
     </div>
   )
 }
 
-function ShiftItem({ update }: { update: UpdateComparison }) {
+function ShiftItem({ update, readWindow }: { update: UpdateComparison; readWindow: ReadWindow }) {
   const { before, after, shift } = update
   // Ranked updates always have both sides; the check keeps TypeScript (and a surprise API answer) honest
   if (before?.avg_score == null || after?.avg_score == null || shift == null) return null
@@ -200,10 +222,29 @@ function ShiftItem({ update }: { update: UpdateComparison }) {
       </p>
       <p className="review-footer">
         Recommended {formatPct(before.recommended_pct ?? 0)} → {formatPct(after.recommended_pct ?? 0)} ·{' '}
-        {formatCount(before.reviews)} reviews before, {formatCount(after.reviews)} after
+        <WindowLinks update={update} readWindow={readWindow}
+          format={(beforeLink, afterLink) => <>{beforeLink} reviews before, {afterLink} after</>} />
       </p>
     </li>
   )
+}
+
+/** The before and after review counts as buttons that show those reviews. */
+function WindowLinks({ update, readWindow, format }: {
+  update: UpdateComparison
+  readWindow: ReadWindow
+  format: (before: ReactNode, after: ReactNode) => ReactNode
+}) {
+  const link = (side: 'before' | 'after') => {
+    const count = update[side]?.reviews ?? 0
+    return (
+      <button type="button" className="link-button" onClick={() => readWindow(update, side)}
+        aria-label={`Read the ${formatCount(count)} reviews from ${side} the update of ${formatDay(update.day)}`}>
+        {formatCount(count)}
+      </button>
+    )
+  }
+  return format(link('before'), link('after'))
 }
 
 function UpdateTitle({ update }: { update: UpdateComparison }) {

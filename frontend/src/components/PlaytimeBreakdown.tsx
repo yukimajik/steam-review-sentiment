@@ -1,16 +1,13 @@
 import type { Playtime, PlaytimeGroupStats } from '../api'
 import { formatCount, formatPct, formatScore, PLAYTIME_LABELS, SENTIMENT_COLORS } from '../format'
 import { useSeenOnce } from '../motion'
+import type { ShowReviews } from './ReviewList'
 
 // One row per playtime group, split like the rest of the page: the share who voted Not recommended
 // to the left of the line, Recommended to the right. These are the players' own votes, not the model.
-export function PlaytimeBreakdown({ data }: { data: Playtime }) {
+// Each half of a bar is a button that shows those reviews in the list below (`onShowReviews`).
+export function PlaytimeBreakdown({ data, onShowReviews }: { data: Playtime; onShowReviews: ShowReviews }) {
   const [rowsRef, seen] = useSeenOnce<HTMLOListElement>() // the bars grow out from the line when first on screen
-  const description = data.groups
-    .map((g) => `${PLAYTIME_LABELS[g.group]}: ${g.recommended_pct === null
-      ? `${formatCount(g.recommended)} of ${formatCount(g.reviews)} recommended`
-      : `${formatPct(g.recommended_pct)} recommended`}`)
-    .join('; ')
 
   return (
     <section className="section">
@@ -20,7 +17,7 @@ export function PlaytimeBreakdown({ data }: { data: Playtime }) {
           How many players recommend the game, grouped by how long they had played when they wrote their review. These
           are the players’ own votes, not the model. Under 2 hours is Steam’s refund window; this page doesn’t show who
           actually refunded or finished the game. Groups with fewer than {data.min_reviews} reviews show counts instead
-          of percentages.
+          of percentages. Click a bar to read those reviews.
         </p>
       </div>
 
@@ -29,8 +26,8 @@ export function PlaytimeBreakdown({ data }: { data: Playtime }) {
           <li><span className="swatch" style={{ background: SENTIMENT_COLORS.negative }} /> Not recommended</li>
           <li><span className="swatch" style={{ background: SENTIMENT_COLORS.positive }} /> Recommended</li>
         </ul>
-        <ol ref={rowsRef} className={seen ? 'playtime-rows is-seen' : 'playtime-rows'} role="img" aria-label={`Share who recommend the game, by playtime. ${description}.`}>
-          {data.groups.map((g) => <PlaytimeRow key={g.group} stats={g} />)}
+        <ol ref={rowsRef} className={seen ? 'playtime-rows is-seen' : 'playtime-rows'} aria-label="Share who recommend the game, by playtime">
+          {data.groups.map((g) => <PlaytimeRow key={g.group} stats={g} onShowReviews={onShowReviews} />)}
         </ol>
         {data.unknown_playtime > 0 && (
           <p className="note">
@@ -66,7 +63,14 @@ export function PlaytimeBreakdown({ data }: { data: Playtime }) {
   )
 }
 
-function PlaytimeRow({ stats }: { stats: PlaytimeGroupStats }) {
+function PlaytimeRow({ stats, onShowReviews }: { stats: PlaytimeGroupStats; onShowReviews: ShowReviews }) {
+  const played = PLAYTIME_LABELS[stats.group].toLowerCase() // "under 2 h"
+  // The playtime button in the list covers the group; the vote has no button there, so it's the tag
+  const showVote = (vote: 'up' | 'down') => onShowReviews({
+    playtime: stats.group,
+    scope: { vote },
+    label: `Voted ${vote === 'up' ? 'Recommended' : 'Not recommended'}, from the playtime chart`,
+  })
   const label = (
     <div className="playtime-label">
       <strong>{PLAYTIME_LABELS[stats.group]}</strong>
@@ -82,23 +86,31 @@ function PlaytimeRow({ stats }: { stats: PlaytimeGroupStats }) {
         <p className="playtime-few">
           {stats.reviews === 0
             ? 'No reviews'
-            : `${formatCount(stats.recommended)} of ${formatCount(stats.reviews)} recommended. Too few to compare.`}
+            : `${formatCount(stats.recommended)} of ${formatCount(stats.reviews)} recommended. Too few to compare. `}
+          {stats.reviews > 0 && (
+            <button type="button" className="link-button" onClick={() => onShowReviews({ playtime: stats.group })}>
+              Read {stats.reviews === 1 ? 'it' : 'them'}
+            </button>
+          )}
         </p>
       </li>
     )
   }
 
   const notRecommended = 100 - stats.recommended_pct
+  const notRecommendedCount = stats.reviews - stats.recommended
   return (
     <li className="playtime-row">
       {label}
       <span className="playtime-pct is-negative">{formatPct(notRecommended)}</span>
-      <span className="playtime-half is-negative">
+      <button type="button" className="playtime-half is-negative" onClick={() => showVote('down')}
+        aria-label={`Read the ${formatCount(notRecommendedCount)} Not recommended reviews from players ${played}`}>
         <span className="playtime-bar" style={{ width: `${notRecommended}%`, background: SENTIMENT_COLORS.negative }} />
-      </span>
-      <span className="playtime-half is-positive">
+      </button>
+      <button type="button" className="playtime-half is-positive" onClick={() => showVote('up')}
+        aria-label={`Read the ${formatCount(stats.recommended)} Recommended reviews from players ${played}`}>
         <span className="playtime-bar" style={{ width: `${stats.recommended_pct}%`, background: SENTIMENT_COLORS.positive }} />
-      </span>
+      </button>
       <span className="playtime-pct">{formatPct(stats.recommended_pct)}</span>
     </li>
   )

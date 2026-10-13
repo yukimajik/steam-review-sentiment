@@ -7,7 +7,7 @@ Interactive docs: http://localhost:8000/docs
 """
 
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Annotated, Literal
 
 import psycopg
@@ -40,6 +40,7 @@ app.add_middleware(
 # lt=2**31: the app_id column is a PostgreSQL INTEGER, so bigger numbers would crash the query
 AppId = Annotated[int, Path(gt=0, lt=2**31, description="Steam app ID, e.g. 620 for Portal 2")]
 Sentiment = Literal["positive", "neutral", "negative"]
+TopicName = Literal[tuple(topics.TOPICS)]  # "performance", "bugs", ...
 
 
 def get_conn():
@@ -231,6 +232,8 @@ class TrendMonth(BaseModel):
                          # of the month's weekly averages: each week counts the same however many reviews it has
     review_count: int    # so a month with a handful of reviews isn't read like one with hundreds
     weeks: int           # weeks in the month that have reviews
+    start: date          # the days the month covers, Monday to Sunday (see month_span), for reading its
+    end: date            # reviews with GET /games/{app_id}/reviews?start=...&end=...
 
 
 class Trend(BaseModel):
@@ -270,14 +273,28 @@ TREND_SQL = """
 """
 
 
+def month_span(first_day: date) -> tuple[date, date]:
+    """The days a trend month covers: from the Monday of its first week to the Sunday of its last,
+    where a week belongs to the month its Thursday is in (TREND_SQL). The week containing the 4th
+    is always a month's first, since its Thursday falls between the 1st and the 7th."""
+    def first_monday(month: date) -> date:
+        fourth = month.replace(day=4)
+        return fourth - timedelta(days=fourth.weekday())
+    next_month = (first_day.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return first_monday(first_day), first_monday(next_month) - timedelta(days=1)
+
+
 @app.get("/games/{app_id}/trend", response_model=Trend)
 def game_trend(app_id: AppId, conn: Annotated[psycopg.Connection, Depends(get_conn)]):
     """Average sentiment for each month, by the date reviews were posted."""
     rows = conn.execute(TREND_SQL, (app_id,)).fetchall()
     if not rows:
         raise no_reviews(app_id)
-    months = [TrendMonth(month=month, avg_compound=round(avg, 3), review_count=count, weeks=weeks)
-              for month, avg, count, weeks in rows]
+    months = []
+    for month, avg, count, weeks in rows:
+        start, end = month_span(date.fromisoformat(month))
+        months.append(TrendMonth(month=month, avg_compound=round(avg, 3), review_count=count, weeks=weeks,
+                                 start=start, end=end))
     return Trend(app_id=app_id, months=months, weeks_to_fill=len(gaps.weeks_to_fill(conn, app_id, updates.today())))
 
 
@@ -585,6 +602,13 @@ REVIEWS_FILTER = """
       AND (%(sentiment)s::text IS NULL OR sentiment_label = %(sentiment)s)
       AND (%(playtime)s::int IS NULL
            OR width_bucket(playtime_at_review_minutes, %(boundaries)s::int[]) = %(playtime)s)
+      AND (%(voted_up)s::bool IS NULL OR voted_up = %(voted_up)s)
+      AND (%(start)s::timestamptz IS NULL OR created_at >= %(start)s)
+      AND (%(end)s::timestamptz IS NULL OR created_at < %(end)s)
+      AND (%(topic)s::text IS NULL OR EXISTS (
+          SELECT 1 FROM review_topics t
+          WHERE t.recommendation_id = reviews.recommendation_id AND t.topic = %(topic)s
+            AND (%(topic_sentiment)s::text IS NULL OR t.sentiment_label = %(topic_sentiment)s)))
 """
 COUNT_REVIEWS_SQL = "SELECT count(*)" + REVIEWS_FILTER
 PAGE_REVIEWS_SQL = """
@@ -603,16 +627,33 @@ def game_reviews(
     sentiment: Sentiment | None = None,
     # ?playtime= in the URL; a different name here so it doesn't hide the playtime module
     playtime_group: Annotated[playtime.PlaytimeGroup | None, Query(alias="playtime")] = None,
+    vote: Annotated[Literal["up", "down"] | None, Query(description="The player's own vote")] = None,
+    start: Annotated[date | None, Query(description="First day (UTC), e.g. 2026-08-31")] = None,
+    end: Annotated[date | None, Query(description="Last day (UTC), included")] = None,
+    topic: Annotated[TopicName | None, Query(description="Only reviews that mention this topic")] = None,
+    topic_sentiment: Annotated[
+        Literal["positive", "negative"] | None, Query(description="With topic: only praise or only complaints")
+    ] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ):
-    """Reviews for a game, newest first, optionally only one sentiment and/or one playtime group."""
+    """Reviews for a game, newest first. Each filter is optional and they combine: the model's label, a
+    playtime group, the player's vote, a date range, and reviews that praise or complain about a topic.
+    These are what the dashboard's charts count, so clicking part of a chart can show the reviews behind it."""
+    if topic_sentiment is not None and topic is None:
+        raise HTTPException(422, "topic_sentiment needs a topic.")
+    if start is not None and end is not None and start > end:
+        raise HTTPException(422, "start must be on or before end.")
     require_reviews(conn, app_id)
     params = {
         "app_id": app_id, "sentiment": sentiment, "limit": page_size, "offset": (page - 1) * page_size,
         # the group's position in playtime.GROUPS, which is what width_bucket returns
         "playtime": None if playtime_group is None else playtime.GROUPS.index(playtime_group),
         "boundaries": playtime.BOUNDARIES,
+        "voted_up": None if vote is None else vote == "up",
+        "start": None if start is None else updates.midnight(start),
+        "end": None if end is None else updates.midnight(end + timedelta(days=1)),  # up to the end of that day
+        "topic": topic, "topic_sentiment": topic_sentiment,
     }
     total = conn.execute(COUNT_REVIEWS_SQL, params).fetchone()[0]
     with conn.cursor(row_factory=dict_row) as cur:
