@@ -1,5 +1,7 @@
-import { useEffect, useState, type CSSProperties } from 'react'
-import { ApiError, getReviews, isAbort, type PlaytimeGroup, type ReviewPage, type Review, type Sentiment } from '../api'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  ApiError, getReviews, isAbort, type PlaytimeGroup, type ReviewPage, type Review, type ReviewScope, type Sentiment,
+} from '../api'
 import {
   formatCount, formatDate, formatPlaytime, formatScore, PLAYTIME_LABELS, SENTIMENT_COLORS, SENTIMENT_LABELS,
   stripFormatting,
@@ -18,10 +20,24 @@ const PLAYTIME_FILTERS: { value: PlaytimeGroup | null; label: string }[] = [
   ...(Object.entries(PLAYTIME_LABELS) as [PlaytimeGroup, string][]).map(([value, label]) => ({ value, label })),
 ]
 
-// Rendered with key={appId}, so searching another game starts fresh (filters and page reset).
-export function ReviewList({ appId }: { appId: number }) {
-  const [sentiment, setSentiment] = useState<Sentiment | null>(null)
-  const [playtime, setPlaytime] = useState<PlaytimeGroup | null>(null)
+/** What a chart asks the review list to show: its sentiment and playtime buttons set to these, plus any
+    filter the buttons can't express (`scope`), shown as a tag described by `label` that can be removed. */
+export interface ReviewRequest {
+  sentiment?: Sentiment | null
+  playtime?: PlaytimeGroup | null
+  scope?: ReviewScope
+  label?: string // "September 2026 (Aug 31 – Sep 27, 2026), from the trend chart"
+}
+
+export type ShowReviews = (request: ReviewRequest) => void
+
+// Rendered with a key per game and per chart request, so each starts fresh (filters and page reset).
+export function ReviewList({ appId, request }: { appId: number; request: ReviewRequest | null }) {
+  const [sentiment, setSentiment] = useState<Sentiment | null>(request?.sentiment ?? null)
+  const [playtime, setPlaytime] = useState<PlaytimeGroup | null>(request?.playtime ?? null)
+  const [scoped, setScoped] = useState(Boolean(request?.scope)) // until the chart's tag is removed
+  const scope = scoped ? request?.scope ?? null : null
+  const scopeLabel = scope ? request?.label ?? 'From a chart' : null
   const [page, setPage] = useState(1)
   const [retryCount, setRetryCount] = useState(0)
   // Results are tagged with the request they answer, so "loading" is simply
@@ -31,22 +47,28 @@ export function ReviewList({ appId }: { appId: number }) {
   } | null>(null)
   const [failed, setFailed] = useState<{ key: string; message: string } | null>(null)
 
-  const requestKey = `${sentiment}-${playtime}-${page}-${retryCount}`
+  const requestKey = `${sentiment}-${playtime}-${scope !== null}-${page}-${retryCount}`
   const loading = loaded?.key !== requestKey && failed?.key !== requestKey
   const error = failed?.key === requestKey ? failed.message : null
   const data = loaded?.data ?? null // the previous page stays on screen (faded) while the next one loads
 
   useEffect(() => {
-    const key = `${sentiment}-${playtime}-${page}-${retryCount}`
+    const key = `${sentiment}-${playtime}-${scope !== null}-${page}-${retryCount}`
     const controller = new AbortController() // cancels this request if a filter or the page changes first
-    getReviews(appId, sentiment, playtime, page, PAGE_SIZE, controller.signal)
+    getReviews(appId, sentiment, playtime, scope, page, PAGE_SIZE, controller.signal)
       .then((result) => setLoaded({ key, sentiment, playtime, data: result }))
       .catch((err) => {
         if (isAbort(err)) return
         setFailed({ key, message: err instanceof ApiError ? err.message : 'Could not load reviews.' })
       })
     return () => controller.abort()
-  }, [appId, sentiment, playtime, page, retryCount])
+  }, [appId, sentiment, playtime, scope, page, retryCount])
+
+  // Opened from a chart: move keyboard focus here too, so the next Tab continues in the list
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  useEffect(() => {
+    if (request) headingRef.current?.focus({ preventScroll: true })
+  }, [request])
 
   function chooseSentiment(value: Sentiment | null) {
     setSentiment(value)
@@ -55,6 +77,11 @@ export function ReviewList({ appId }: { appId: number }) {
 
   function choosePlaytime(value: PlaytimeGroup | null) {
     setPlaytime(value)
+    setPage(1)
+  }
+
+  function removeScope() {
+    setScoped(false)
     setPage(1)
   }
 
@@ -68,7 +95,7 @@ export function ReviewList({ appId }: { appId: number }) {
   return (
     <section className="section">
       <div className="section-head">
-        <h3>Reviews</h3>
+        <h3 ref={headingRef} tabIndex={-1}>Reviews</h3>
         {data && <p className="note">{formatCount(data.total)} {filterName}reviews{playtimeName}</p>}
         <p className="filter-label" id="sentiment-filter-label">Sentiment</p>
         <div className="filters" role="group" aria-labelledby="sentiment-filter-label">
@@ -99,6 +126,14 @@ export function ReviewList({ appId }: { appId: number }) {
             </button>
           ))}
         </div>
+        {scopeLabel && (
+          <p className="review-scope">
+            <span>{scopeLabel}</span>
+            <button type="button" className="review-scope-remove" onClick={removeScope} aria-label={`Remove filter: ${scopeLabel}`}>
+              <span aria-hidden="true">×</span>
+            </button>
+          </p>
+        )}
       </div>
 
       <div className="section-body">
@@ -112,7 +147,9 @@ export function ReviewList({ appId }: { appId: number }) {
         ) : !data ? (
           <ReviewListSkeleton />
         ) : data.items.length === 0 ? (
-          <p className="empty">No {filterName}reviews{playtimeName || ' for this game'}.</p>
+          <p className="empty">
+            No {filterName}reviews{playtimeName || (scopeLabel ? '' : ' for this game')}{scopeLabel && ' with the chart’s filter'}.
+          </p>
         ) : (
           // While the next page loads, keep the current one visible but faded (no layout jump)
           <ol className={loading ? 'review-items is-refreshing' : 'review-items'} aria-busy={loading}>

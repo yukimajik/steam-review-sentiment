@@ -4,9 +4,10 @@ import {
   type TooltipContentProps,
 } from 'recharts'
 import { ApiError, getOfftopic, isAbort, type Offtopic, type OfftopicPeriod, type TrendMonth } from '../api'
-import { formatCount, formatDay, formatMonth, formatScore } from '../format'
+import { formatCount, formatDay, formatDayRange, formatMonth, formatScore } from '../format'
 import { usePrefersReducedMotion, useSeenOnce } from '../motion'
 import { GapFill } from './GapFill'
+import type { ShowReviews } from './ReviewList'
 
 // A month's average needs this many reviews to join the solid line; fewer are hollow dots. A single
 // review scored 0 once made a cliff in Silksong's chart. Same minimum as the playtime groups and the
@@ -60,9 +61,10 @@ function monthTicks(points: Point[]): { ticks: number[]; format: (t: number) => 
 
 // `updateTimes`: when each game update was posted, in milliseconds, drawn as dashed lines.
 // `weeksToFill`: weeks of the past year under 30 reviews, not yet asked about; `onFilled` reloads the
-// dashboard once they are.
-export function TrendChart({ appId, months, updateTimes, weeksToFill, onFilled }: {
+// dashboard once they are. Clicking a month shows its reviews in the list below (`onShowReviews`).
+export function TrendChart({ appId, months, updateTimes, weeksToFill, onFilled, onShowReviews }: {
   appId: number; months: TrendMonth[]; updateTimes: number[]; weeksToFill: number; onFilled: () => void
+  onShowReviews: ShowReviews
 }) {
   const offtopic = useOfftopic(appId)
   const points = useMemo(() => toPoints(months), [months]) // a new array each render would redraw the line
@@ -80,6 +82,21 @@ export function TrendChart({ appId, months, updateTimes, weeksToFill, onFilled }
   const end = Math.max(nextMonth(monthStart(last.month)), ...drawn.map((p) => p.to))
   const { ticks, format } = monthTicks(points)
   const shownUpdates = updateTimes.filter((t) => t >= start && t <= end)
+
+  // A month's reviews are the ones its weeks hold: the API sends the Monday-to-Sunday span for each
+  const showMonth = (m: TrendMonth) => onShowReviews({
+    scope: { start: m.start, end: m.end },
+    label: `${formatMonth(m.month)} (${formatDayRange(m.start, m.end)}), from the trend chart`,
+  })
+  const byMonth = new Map(months.map((m) => [m.month, m]))
+  // Recharts reports the month under the pointer (the one its tooltip shows), or null if there's none;
+  // Number(null) would be 0, the first month, so that case is checked first
+  const showClicked = ({ activeTooltipIndex }: { activeTooltipIndex?: number | string | null }) => {
+    if (activeTooltipIndex == null) return
+    const point = points[Number(activeTooltipIndex)]
+    const month = point && byMonth.get(point.month)
+    if (month) showMonth(month) // months with no reviews aren't stored, so there's nothing to show
+  }
 
   const hasGaps = points.some((p) => p.review_count === 0)
   const hasSparse = points.some((p) => p.sparse !== null)
@@ -103,6 +120,7 @@ export function TrendChart({ appId, months, updateTimes, weeksToFill, onFilled }
           {drawn.length > 0 && '. Hatched areas mark periods Steam flagged as off-topic review activity'}.
           {hasSparse && ` Hollow dots are months with fewer than ${MIN_MONTH_REVIEWS} reviews, too few to rely on.`}
           {(hasSparse || hasGaps) && ' A faint dashed line joins every month that has reviews, so the line doesn’t break where the solid line stops.'}
+          {' '}Click a month to read its reviews.
         </p>
       </div>
       <div className="section-body">
@@ -115,7 +133,8 @@ export function TrendChart({ appId, months, updateTimes, weeksToFill, onFilled }
             `Most recent: ${formatMonth(last.month)}, ${formatScore(last.avg_compound)}.`}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={shownPoints} margin={{ top: 24, right: 24, bottom: 0, left: -12 }}>
+            <LineChart data={shownPoints} margin={{ top: 24, right: 24, bottom: 0, left: -12 }} onClick={showClicked}
+              style={{ cursor: 'pointer' }}>
               <defs>
               <pattern id="offtopic-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
                 <line x1="0" y1="0" x2="0" y2="6" stroke="var(--ink-3)" strokeWidth="1.5" strokeOpacity="0.45" />
@@ -206,7 +225,12 @@ export function TrendChart({ appId, months, updateTimes, weeksToFill, onFilled }
                 <tr key={m.month}>
                   <td>{formatMonth(m.month)}</td>
                   <td>{formatScore(m.avg_compound)}</td>
-                  <td>{formatCount(m.review_count)}</td>
+                  <td>
+                    <button type="button" className="link-button" onClick={() => showMonth(m)}
+                      aria-label={`Read the ${formatCount(m.review_count)} reviews from ${formatMonth(m.month)}`}>
+                      {formatCount(m.review_count)}
+                    </button>
+                  </td>
                   <td>{m.weeks}</td>
                 </tr>
               ))}
@@ -277,6 +301,7 @@ function TrendTooltip({ active, payload }: TooltipContentProps) {
             {point.weeks} {point.weeks === 1 ? 'week' : 'weeks'}
             {point.review_count < MIN_MONTH_REVIEWS && ', too few to rely on'}
           </span>
+          <span className="tooltip-hint">Click to read them</span>
         </>
       )}
     </div>

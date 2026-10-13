@@ -6,7 +6,7 @@ import psycopg
 import pytest
 
 from app import db, gaps, updates
-from app.main import app, get_conn
+from app.main import app, get_conn, month_span
 from tests.helpers import FakeResponse, add_review, add_topic, steam_page, steam_review
 
 
@@ -139,9 +139,33 @@ def test_trend_averages_by_month(client, conn, monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"app_id": 620, "months": [
-        {"month": "2026-09-01", "avg_compound": 0.2, "review_count": 2, "weeks": 1},
-        {"month": "2026-10-01", "avg_compound": 0.6, "review_count": 2, "weeks": 2},
+        {"month": "2026-09-01", "avg_compound": 0.2, "review_count": 2, "weeks": 1,
+         "start": "2026-08-31", "end": "2026-09-27"},
+        {"month": "2026-10-01", "avg_compound": 0.6, "review_count": 2, "weeks": 2,
+         "start": "2026-09-28", "end": "2026-11-01"},
     ], "weeks_to_fill": 5}  # all five weeks are over and under 30 reviews, the empty Oct 5 and Oct 12 included
+
+
+def test_a_months_span_finds_exactly_the_reviews_it_counts(client, conn):
+    # The edges of September's span (Aug 31 to Sep 27), and just outside them
+    for review_id, when in enumerate([datetime(2026, 8, 30, 23, 59), datetime(2026, 8, 31, 0, 0),
+                                      datetime(2026, 9, 27, 23, 59), datetime(2026, 9, 28, 0, 0)], start=1):
+        add_review(conn, review_id, created_at=when.replace(tzinfo=timezone.utc))
+    for month in client.get("/games/620/trend").json()["months"]:
+        reviews = client.get(f"/games/620/reviews?start={month['start']}&end={month['end']}").json()
+        assert reviews["total"] == month["review_count"]
+    september = client.get("/games/620/reviews?start=2026-08-31&end=2026-09-27").json()
+    assert {r["recommendation_id"] for r in september["items"]} == {2, 3}
+
+
+@pytest.mark.parametrize("first_day, start, end", [
+    (date(2026, 9, 1), date(2026, 8, 31), date(2026, 9, 27)),
+    (date(2026, 1, 1), date(2025, 12, 29), date(2026, 2, 1)),   # Thu Jan 1: the week of Dec 29 is January's
+    (date(2026, 2, 1), date(2026, 2, 2), date(2026, 3, 1)),     # Sun Feb 1: that week is January's
+    (date(2025, 12, 1), date(2025, 12, 1), date(2025, 12, 28)),
+])
+def test_month_span(first_day, start, end):
+    assert month_span(first_day) == (start, end)
 
 
 def test_trend_counts_each_week_once_in_its_month(client, conn):
@@ -280,6 +304,55 @@ def test_reviews_playtime_filter(client, conn):
     assert over_50h["total"] == 0
 
 
+def test_reviews_vote_filter(client, conn):
+    add_review(conn, 1, voted_up=True, playtime=30)
+    add_review(conn, 2, voted_up=False, playtime=30)
+    add_review(conn, 3, voted_up=False, playtime=600)
+    down = client.get("/games/620/reviews?vote=down").json()
+    down_under_2h = client.get("/games/620/reviews?vote=down&playtime=under_2h").json()
+    assert {r["recommendation_id"] for r in down["items"]} == {2, 3}
+    assert [r["recommendation_id"] for r in down_under_2h["items"]] == [2]
+    assert client.get("/games/620/reviews?vote=up").json()["total"] == 1
+
+
+def test_reviews_date_range_includes_both_whole_days(client, conn):
+    add_review(conn, 1, created_at=datetime(2026, 3, 1, 23, 59, tzinfo=timezone.utc))
+    add_review(conn, 2, created_at=datetime(2026, 3, 2, 0, 0, tzinfo=timezone.utc))
+    add_review(conn, 3, created_at=datetime(2026, 3, 15, 23, 59, tzinfo=timezone.utc))
+    add_review(conn, 4, created_at=datetime(2026, 3, 16, 0, 0, tzinfo=timezone.utc))
+    ids = lambda q: {r["recommendation_id"] for r in client.get(f"/games/620/reviews?{q}").json()["items"]}
+    assert ids("start=2026-03-02&end=2026-03-15") == {2, 3}
+    assert ids("start=2026-03-02") == {2, 3, 4}
+    assert ids("end=2026-03-01") == {1}
+    assert ids("start=2026-03-01&end=2026-03-01") == {1}
+
+
+def test_reviews_topic_filter(client, conn):
+    add_review(conn, 1)
+    add_review(conn, 2)
+    add_review(conn, 3)
+    add_review(conn, 4, app_id=730)  # another game's review about the same topic
+    add_topic(conn, 1, "performance", label="negative")
+    add_topic(conn, 2, "performance", label="positive")
+    add_topic(conn, 3, "story", label="negative")
+    add_topic(conn, 4, "performance", label="negative")
+    ids = lambda q: {r["recommendation_id"] for r in client.get(f"/games/620/reviews?{q}").json()["items"]}
+    assert ids("topic=performance") == {1, 2}
+    assert ids("topic=performance&topic_sentiment=negative") == {1}
+    assert ids("topic=performance&topic_sentiment=positive") == {2}
+    assert ids("topic=bugs") == set()
+
+
+def test_topic_counts_match_the_topic_filter(client, conn):
+    for review_id, label in enumerate(["negative", "negative", "positive", "neutral"], start=1):
+        add_review(conn, review_id)
+        add_topic(conn, review_id, "bugs", label=label)
+    bugs = next(t for t in client.get("/games/620/topics").json()["topics"] if t["topic"] == "bugs")
+    for side in ("positive", "negative"):
+        total = client.get(f"/games/620/reviews?topic=bugs&topic_sentiment={side}").json()["total"]
+        assert total == bugs[side]
+
+
 def test_reviews_filter_with_no_matches_is_empty_not_404(client, conn):
     add_review(conn, 1, label="positive")
     response = client.get("/games/620/reviews?sentiment=negative")
@@ -287,7 +360,11 @@ def test_reviews_filter_with_no_matches_is_empty_not_404(client, conn):
     assert response.json()["items"] == []
 
 
-@pytest.mark.parametrize("query", ["sentiment=angry", "playtime=forever", "page=0", "page_size=0", "page_size=101"])
+@pytest.mark.parametrize("query", [
+    "sentiment=angry", "playtime=forever", "page=0", "page_size=0", "page_size=101", "vote=maybe",
+    "start=2026-13-01", "end=yesterday", "start=2026-03-02&end=2026-03-01", "topic=weather",
+    "topic_sentiment=negative", "topic=bugs&topic_sentiment=neutral",
+])
 def test_reviews_reject_bad_input(client, conn, query):
     add_review(conn, 1)
     assert client.get(f"/games/620/reviews?{query}").status_code == 422

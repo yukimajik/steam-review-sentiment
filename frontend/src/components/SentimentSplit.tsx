@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Sentiment, Summary } from '../api'
 import { formatCount, formatPct, SENTIMENT_COLORS, SENTIMENT_LABELS } from '../format'
 import { CountUp } from './CountUp'
+import type { ShowReviews } from './ReviewList'
 
 const formatWhole = (n: number) => formatCount(Math.round(n))
 
@@ -54,7 +55,8 @@ function toSlices(summary: Summary): Slice[] {
   return slices.filter((slice) => slice.pct > 0)
 }
 
-export function SentimentSplit({ summary }: { summary: Summary }) {
+// Clicking a slice or its number shows those reviews in the list below (`onShowReviews`).
+export function SentimentSplit({ summary, onShowReviews }: { summary: Summary; onShowReviews: ShowReviews }) {
   const [active, setActive] = useState<Sentiment | null>(null) // hovered slice or number
   const slices = toSlices(summary)
   const description = (['positive', 'neutral', 'negative'] as const)
@@ -63,13 +65,14 @@ export function SentimentSplit({ summary }: { summary: Summary }) {
   const hover = (sentiment: Sentiment) => ({
     onMouseEnter: () => setActive(sentiment),
     onMouseLeave: () => setActive(null),
+    onClick: () => onShowReviews({ sentiment }),
   })
 
   return (
     <div className="hero-body">
       <div className="hero-split">
         <h3>Sentiment breakdown</h3>
-        <p className="note">Share of reviews the model labels negative, neutral or positive.</p>
+        <p className="note">Share of reviews the model labels negative, neutral or positive. Click one to read them.</p>
 
         <div className={active ? 'split has-active' : 'split'}>
           <SplitSide sentiment="negative" pct={summary.negative_pct} active={active} {...hover('negative')} />
@@ -105,10 +108,10 @@ export function SentimentSplit({ summary }: { summary: Summary }) {
             </div>
           </figure>
           <SplitSide sentiment="positive" pct={summary.positive_pct} active={active} {...hover('positive')} />
-          <p className={active === 'neutral' ? 'split-neutral is-active' : 'split-neutral'} {...hover('neutral')}>
+          <button type="button" className={active === 'neutral' ? 'split-neutral plain-button is-active' : 'split-neutral plain-button'} {...hover('neutral')}>
             <span className="dot" style={{ background: SENTIMENT_COLORS.neutral }} />
             Neutral <strong><CountUp value={summary.neutral_pct} format={formatPct} /></strong>
-          </p>
+          </button>
         </div>
       </div>
 
@@ -117,22 +120,23 @@ export function SentimentSplit({ summary }: { summary: Summary }) {
   )
 }
 
-function SplitSide({ sentiment, pct, active, onMouseEnter, onMouseLeave }: {
+function SplitSide({ sentiment, pct, active, onMouseEnter, onMouseLeave, onClick }: {
   sentiment: 'positive' | 'negative'
   pct: number
   active: Sentiment | null
   onMouseEnter: () => void
   onMouseLeave: () => void
+  onClick: () => void
 }) {
-  const className = `split-side is-${sentiment}${active === sentiment ? ' is-active' : ''}`
+  const className = `split-side plain-button is-${sentiment}${active === sentiment ? ' is-active' : ''}`
   return (
-    <div className={className} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
-      <p className="split-value"><CountUp value={pct} format={formatPct} /></p>
-      <p className="split-label">
+    <button type="button" className={className} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onClick={onClick}>
+      <span className="split-value"><CountUp value={pct} format={formatPct} /></span>
+      <span className="split-label">
         <span className="dot" style={{ background: SENTIMENT_COLORS[sentiment] }} />
         {SENTIMENT_LABELS[sentiment]}
-      </p>
-    </div>
+      </span>
+    </button>
   )
 }
 

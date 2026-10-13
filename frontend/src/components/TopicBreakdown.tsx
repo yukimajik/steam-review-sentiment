@@ -6,6 +6,7 @@ import {
 import type { Topic, TopicExample, Topics, TopicSummary } from '../api'
 import { formatCount, formatPct, formatScore, SENTIMENT_COLORS, TOPIC_LABELS } from '../format'
 import { usePrefersReducedMotion, useSeenOnce } from '../motion'
+import type { ShowReviews } from './ReviewList'
 
 interface Row {
   topic: Topic
@@ -16,8 +17,9 @@ interface Row {
   summary: TopicSummary
 }
 
-// Rendered with a key per game, so a new game starts on its own most-mentioned topic.
-export function TopicBreakdown({ data }: { data: Topics }) {
+// Rendered with a key per game, so a new game starts on its own most-mentioned topic. Each side of the
+// examples links to all of its reviews in the list below (`onShowReviews`).
+export function TopicBreakdown({ data, onShowReviews }: { data: Topics; onShowReviews: ShowReviews }) {
   const [selected, setSelected] = useState<Topic | null>(null)
   const [chartRef, seen] = useSeenOnce<HTMLDivElement>()
   const reduced = usePrefersReducedMotion()
@@ -151,8 +153,10 @@ export function TopicBreakdown({ data }: { data: Topics }) {
         ) : (
           // Complaints on the left and praise on the right, matching the chart
           <div className="topic-examples">
-            <ExampleColumn kind="complaints" topic={shown.topic} count={shown.negative} examples={shown.complaints} />
-            <ExampleColumn kind="praise" topic={shown.topic} count={shown.positive} examples={shown.praise} />
+            <ExampleColumn kind="complaints" topic={shown.topic} count={shown.negative} examples={shown.complaints}
+              onShowReviews={onShowReviews} />
+            <ExampleColumn kind="praise" topic={shown.topic} count={shown.positive} examples={shown.praise}
+              onShowReviews={onShowReviews} />
           </div>
         )}
       </div>
@@ -160,13 +164,19 @@ export function TopicBreakdown({ data }: { data: Topics }) {
   )
 }
 
-function ExampleColumn({ kind, topic, count, examples }: {
+function ExampleColumn({ kind, topic, count, examples, onShowReviews }: {
   kind: 'praise' | 'complaints'
   topic: Topic
   count: number
   examples: TopicExample[]
+  onShowReviews: ShowReviews
 }) {
   const color = SENTIMENT_COLORS[kind === 'praise' ? 'positive' : 'negative']
+  const about = `${kind === 'praise' ? 'Praise for' : 'Complaints about'} ${TOPIC_LABELS[topic].toLowerCase()}`
+  const showAll = () => onShowReviews({
+    scope: { topic, topic_sentiment: kind === 'praise' ? 'positive' : 'negative' },
+    label: `${about}, from the topics`,
+  })
   return (
     <div>
       <h4 className="topic-examples-title">
@@ -183,6 +193,11 @@ function ExampleColumn({ kind, topic, count, examples }: {
             <Excerpt key={`${topic}-${example.recommendation_id}`} example={example} />
           ))}
         </ul>
+      )}
+      {count > 0 && (
+        <button type="button" className="link-button topic-read-all" onClick={showAll}>
+          Read all {formatCount(count)} {count === 1 ? 'review' : 'reviews'}
+        </button>
       )}
     </div>
   )

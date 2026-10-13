@@ -34,6 +34,8 @@ export interface TrendMonth {
   avg_compound: number // -1 to +1: the average of the month's weekly averages, so each week counts once
   review_count: number
   weeks: number // weeks in the month that have reviews
+  start: string // the days the month covers, Monday to Sunday (a week belongs to the month its Thursday is in)
+  end: string
 }
 
 export interface Trend {
@@ -277,13 +279,23 @@ export function fetchUpdateReviews(appId: number, signal?: AbortSignal) {
   return request<UpdateFetchResult>(`/games/${appId}/updates/fetch`, { method: 'POST', signal })
 }
 
+/** Filters a chart can add to the review list, beyond its sentiment and playtime buttons. */
+export interface ReviewScope {
+  vote?: 'up' | 'down' // the player's own vote
+  start?: string // "2026-08-31"; both days are included (UTC)
+  end?: string
+  topic?: Topic
+  topic_sentiment?: 'positive' | 'negative' // with a topic: only praise, or only complaints
+}
+
 export function getReviews(
-  appId: number, sentiment: Sentiment | null, playtime: PlaytimeGroup | null, page: number, pageSize: number,
-  signal?: AbortSignal,
+  appId: number, sentiment: Sentiment | null, playtime: PlaytimeGroup | null, scope: ReviewScope | null,
+  page: number, pageSize: number, signal?: AbortSignal,
 ) {
   const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
   if (sentiment) params.set('sentiment', sentiment)
   if (playtime) params.set('playtime', playtime)
+  for (const [name, value] of Object.entries(scope ?? {})) if (value) params.set(name, value)
   return request<ReviewPage>(`/games/${appId}/reviews?${params}`, { signal })
 }
 
